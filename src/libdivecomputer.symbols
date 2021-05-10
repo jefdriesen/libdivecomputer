@@ -67,8 +67,15 @@ dc_bluetooth_device_free
 dc_bluetooth_iterator_new
 dc_bluetooth_open
 
+dc_ble_addr2str
+dc_ble_str2addr
 dc_ble_uuid2str
 dc_ble_str2uuid
+dc_ble_device_get_address
+dc_ble_device_get_name
+dc_ble_device_free
+dc_ble_iterator_new
+dc_ble_open
 
 dc_irda_device_get_address
 dc_irda_device_get_name

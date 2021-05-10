@@ -38,6 +38,7 @@
 #include <libdivecomputer/serial.h>
 #include <libdivecomputer/irda.h>
 #include <libdivecomputer/bluetooth.h>
+#include <libdivecomputer/ble.h>
 #include <libdivecomputer/usb.h>
 #include <libdivecomputer/usbhid.h>
 
@@ -61,6 +62,9 @@ scan (dc_context_t *context, dc_descriptor_t *descriptor, dc_transport_t transpo
 		break;
 	case DC_TRANSPORT_BLUETOOTH:
 		status = dc_bluetooth_iterator_new (&iterator, context, descriptor);
+		break;
+	case DC_TRANSPORT_BLE:
+		status = dc_ble_iterator_new (&iterator, context, descriptor);
 		break;
 	case DC_TRANSPORT_USB:
 		status = dc_usb_iterator_new (&iterator, context, descriptor);
@@ -94,6 +98,12 @@ scan (dc_context_t *context, dc_descriptor_t *descriptor, dc_transport_t transpo
 			printf ("%s\t%s\n",
 				dc_bluetooth_addr2str(dc_bluetooth_device_get_address (device), buffer, sizeof(buffer)),
 				dc_bluetooth_device_get_name (device));
+			dc_bluetooth_device_free (device);
+			break;
+		case DC_TRANSPORT_BLE:
+			printf ("%s\t%s\n",
+				dc_ble_addr2str(dc_ble_device_get_address (device), buffer, sizeof(buffer)),
+				dc_ble_device_get_name (device));
 			dc_bluetooth_device_free (device);
 			break;
 		case DC_TRANSPORT_USB:

@@ -30,6 +30,7 @@
 
 #include <libdivecomputer/serial.h>
 #include <libdivecomputer/bluetooth.h>
+#include <libdivecomputer/ble.h>
 #include <libdivecomputer/irda.h>
 #include <libdivecomputer/usb.h>
 #include <libdivecomputer/usbhid.h>
@@ -569,6 +570,52 @@ cleanup:
 	return status;
 }
 
+static dc_status_t
+dctool_ble_open (dc_iostream_t **out, dc_context_t *context, dc_descriptor_t *descriptor, const char *devname)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_iostream_t *iostream = NULL;
+	dc_ble_address_t address = 0;
+
+	if (devname) {
+		// Use the address.
+		address = dc_ble_str2addr(devname);
+	} else {
+		// Discover the device address.
+		dc_iterator_t *iterator = NULL;
+		dc_ble_device_t *device = NULL;
+		dc_ble_iterator_new (&iterator, context, descriptor);
+		while (dc_iterator_next (iterator, &device) == DC_STATUS_SUCCESS) {
+			address = dc_ble_device_get_address (device);
+			dc_ble_device_free (device);
+			break;
+		}
+		dc_iterator_free (iterator);
+	}
+
+	if (address == 0) {
+		if (devname) {
+			ERROR ("No valid device address specified.");
+		} else {
+			ERROR ("No dive computer found.");
+		}
+		status = DC_STATUS_NODEVICE;
+		goto cleanup;
+	}
+
+	// Open the BLE device.
+	status = dc_ble_open (&iostream, context, address);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR ("Failed to open the ble device.");
+		goto cleanup;
+	}
+
+	*out = iostream;
+
+cleanup:
+	return status;
+}
+
 dc_status_t
 dctool_iostream_open (dc_iostream_t **iostream, dc_context_t *context, dc_descriptor_t *descriptor, dc_transport_t transport, const char *devname)
 {
@@ -583,6 +630,8 @@ dctool_iostream_open (dc_iostream_t **iostream, dc_context_t *context, dc_descri
 		return dctool_irda_open (iostream, context, descriptor, devname);
 	case DC_TRANSPORT_BLUETOOTH:
 		return dctool_bluetooth_open (iostream, context, descriptor, devname);
+	case DC_TRANSPORT_BLE:
+		return dctool_ble_open (iostream, context, descriptor, devname);
 	default:
 		return DC_STATUS_UNSUPPORTED;
 	}

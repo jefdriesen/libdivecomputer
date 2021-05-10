@@ -22,6 +22,11 @@
 #ifndef DC_BLE_H
 #define DC_BLE_H
 
+#include "common.h"
+#include "context.h"
+#include "iostream.h"
+#include "iterator.h"
+#include "descriptor.h"
 #include "ioctl.h"
 
 #ifdef __cplusplus
@@ -62,14 +67,62 @@ extern "C" {
 
 /**
  * The minimum number of bytes (including the terminating null byte) for
+ * formatting a bluetooth address as a string.
+ */
+#define DC_BLE_ADDRESS_SIZE 18
+
+/**
+ * The minimum number of bytes (including the terminating null byte) for
  * formatting a bluetooth UUID as a string.
  */
 #define DC_BLE_UUID_SIZE 37
 
 /**
+ * Bluetooth address (48 bits).
+ */
+#if defined (_WIN32) && !defined (__GNUC__)
+typedef unsigned __int64 dc_ble_address_t;
+#else
+typedef unsigned long long dc_ble_address_t;
+#endif
+
+/**
  * Bluetooth UUID (128 bits).
  */
 typedef unsigned char dc_ble_uuid_t[16];
+
+/**
+ * Opaque object representing a bluetooth device.
+ */
+typedef struct dc_ble_device_t dc_ble_device_t;
+
+/**
+ * Convert a bluetooth address to a string.
+ *
+ * The bluetooth address is formatted as XX:XX:XX:XX:XX:XX, where each
+ * XX is a hexadecimal number specifying an octet of the 48-bit address.
+ * The minimum size for the buffer is #DC_BLE_ADDRESS_SIZE bytes.
+ *
+ * @param[in]  address  A bluetooth address.
+ * @param[in]  str      The memory buffer to store the result.
+ * @param[in]  size     The size of the memory buffer.
+ * @returns The null-terminated string on success, or NULL on failure.
+ */
+char *
+dc_ble_addr2str(dc_ble_address_t address, char *str, size_t size);
+
+/**
+ * Convert a string to a bluetooth address.
+ *
+ * The string is expected to be in the format XX:XX:XX:XX:XX:XX, where
+ * each XX is a hexadecimal number specifying an octet of the 48-bit
+ * address.
+ *
+ * @param[in]  address  A null-terminated string.
+ * @returns The bluetooth address on success, or zero on failure.
+ */
+dc_ble_address_t
+dc_ble_str2addr(const char *address);
 
 /**
  * Convert a bluetooth UUID to a string.
@@ -100,6 +153,54 @@ dc_ble_uuid2str (const dc_ble_uuid_t uuid, char *str, size_t size);
  */
 int
 dc_ble_str2uuid (const char *str, dc_ble_uuid_t uuid);
+
+/**
+ * Get the address of the bluetooth device.
+ *
+ * @param[in]  device  A valid bluetooth device.
+ */
+dc_ble_address_t
+dc_ble_device_get_address (dc_ble_device_t *device);
+
+/**
+ * Get the name of the bluetooth device.
+ *
+ * @param[in]  device  A valid bluetooth device.
+ */
+const char *
+dc_ble_device_get_name (dc_ble_device_t *device);
+
+/**
+ * Destroy the bluetooth device and free all resources.
+ *
+ * @param[in]  device  A valid bluetooth device.
+ */
+void
+dc_ble_device_free (dc_ble_device_t *device);
+
+/**
+ * Create an iterator to enumerate the bluetooth devices.
+ *
+ * @param[out] iterator    A location to store the iterator.
+ * @param[in]  context     A valid context object.
+ * @param[in]  descriptor  A valid device descriptor or NULL.
+ * @returns #DC_STATUS_SUCCESS on success, or another #dc_status_t code
+ * on failure.
+ */
+dc_status_t
+dc_ble_iterator_new (dc_iterator_t **iterator, dc_context_t *context, dc_descriptor_t *descriptor);
+
+/**
+ * Open an bluetooth connection.
+ *
+ * @param[out]  iostream   A location to store the bluetooth connection.
+ * @param[in]   context    A valid context object.
+ * @param[in]   address    The bluetooth device address.
+ * @returns #DC_STATUS_SUCCESS on success, or another #dc_status_t code
+ * on failure.
+ */
+dc_status_t
+dc_ble_open (dc_iostream_t **iostream, dc_context_t *context, dc_ble_address_t address);
 
 #ifdef __cplusplus
 }
