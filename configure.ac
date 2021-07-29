@@ -129,6 +129,19 @@ AS_IF([test "x$with_bluez" != "xno"], [
 	])
 ])
 
+# Checks for Glib support.
+AC_ARG_WITH([glib],
+	[AS_HELP_STRING([--without-glib],
+		[Build without the Glib library])],
+	[], [with_glib=auto])
+AS_IF([test "x$with_glib" != "xno"], [
+	PKG_CHECK_MODULES([GLIB], [glib-2.0 gio-2.0], [have_glib=yes], [have_glib=no])
+	AS_IF([test "x$have_glib" = "xyes"], [
+		AC_DEFINE([HAVE_GLIB], [1], [GLib library])
+		DEPENDENCIES="$DEPENDENCIES glib-2.0 gio-2.0"
+	])
+])
+
 AC_SUBST([DEPENDENCIES])
 
 # Checks for Windows bluetooth support.
@@ -229,7 +242,7 @@ if test "$platform" = "windows"; then
 else
 	transport_irda="$ac_cv_header_linux_irda_h"
 	transport_bluetooth="${have_bluez-no}"
-	transport_ble="no"
+	transport_ble="${have_glib-no}"
 fi
 
 AC_CONFIG_FILES([

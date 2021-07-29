@@ -31,6 +31,10 @@
 #include "ble-win32.h"
 #endif
 
+#ifdef HAVE_GLIB
+#include "ble-bluez.h"
+#endif
+
 #include <libdivecomputer/ble.h>
 #include <libdivecomputer/buffer.h>
 
@@ -81,6 +85,11 @@ typedef struct dc_ble_iterator_t {
 	HDEVINFO hDI;
 	DWORD current;
 #endif
+#ifdef HAVE_GLIB
+	bluez_ble_device_t *devices;
+	size_t ndevices;
+	size_t current;
+#endif
 } dc_ble_iterator_t;
 
 typedef struct dc_ble_uart_t {
@@ -111,6 +120,15 @@ typedef struct dc_ble_t {
 	BTH_LE_GATT_CHARACTERISTIC characteristic_rx;
 	BTH_LE_GATT_CHARACTERISTIC characteristic_tx_credits;
 	BTH_LE_GATT_CHARACTERISTIC characteristic_rx_credits;
+#endif
+
+#ifdef HAVE_GLIB
+	bluez_ble_t *bluez;
+	bluez_ble_service_t service;
+	bluez_ble_characteristic_t characteristic_rx;
+	bluez_ble_characteristic_t characteristic_tx;
+	bluez_ble_characteristic_t characteristic_rx_credits;
+	bluez_ble_characteristic_t characteristic_tx_credits;
 #endif
 } dc_ble_t;
 
@@ -401,12 +419,35 @@ dc_ble_iterator_new (dc_iterator_t **out, dc_context_t *context, dc_descriptor_t
 	iterator->current = 0;
 #endif
 
+#ifdef HAVE_GLIB
+	iterator->devices = NULL;
+	iterator->ndevices = 0;
+	iterator->current = 0;
+
+	bluez_ble_t *bluez = NULL;
+	status = bluez_ble_new (&bluez, context);
+	if (status != DC_STATUS_SUCCESS) {
+		goto error_free;
+	}
+
+	status = bluez_ble_scan (bluez, 10, &iterator->devices, &iterator->ndevices);
+	if (status != DC_STATUS_SUCCESS) {
+		goto error_free_bluez;
+	}
+
+	bluez_ble_free (bluez);
+#endif
+
 	iterator->descriptor = descriptor;
 
 	*out = (dc_iterator_t *) iterator;
 
 	return DC_STATUS_SUCCESS;
 
+#ifdef HAVE_GLIB
+error_free_bluez:
+	bluez_ble_free (bluez);
+#endif
 error_free:
 	dc_iterator_deallocate ((dc_iterator_t *) iterator);
 	return status;
@@ -459,6 +500,38 @@ dc_ble_iterator_next (dc_iterator_t *abstract, void *out)
 	}
 #endif
 
+#ifdef HAVE_GLIB
+	while (iterator->current < iterator->ndevices) {
+		bluez_ble_device_t *dev = &iterator->devices[iterator->current++];
+		dc_ble_address_t address = dev->address;
+		const char *name = dev->name;
+
+		INFO (abstract->context, "Discover: address=" DC_ADDRESS_FORMAT ", name=%s",
+			address, name ? name : "");
+
+		if (!dc_descriptor_filter (iterator->descriptor, DC_TRANSPORT_BLE, name)) {
+			continue;
+		}
+
+		device = (dc_ble_device_t *) malloc (sizeof(dc_ble_device_t));
+		if (device == NULL) {
+			return DC_STATUS_NOMEMORY;
+		}
+
+		device->address = address;
+		if (name) {
+			strncpy(device->name, name, sizeof(device->name) - 1);
+			device->name[sizeof(device->name) - 1] = '\0';
+		} else {
+			memset(device->name, 0, sizeof(device->name));
+		}
+
+		*(dc_ble_device_t **) out = device;
+
+		return DC_STATUS_SUCCESS;
+	}
+#endif
+
 	return DC_STATUS_DONE;
 }
 
@@ -469,6 +542,10 @@ dc_ble_iterator_free (dc_iterator_t *abstract)
 
 #ifdef _WIN32
 	SetupDiDestroyDeviceInfoList (iterator->hDI);
+#endif
+
+#ifdef HAVE_GLIB
+	free (iterator->devices);
 #endif
 
 	return DC_STATUS_SUCCESS;
@@ -485,6 +562,9 @@ ble_write_credits (dc_ble_t *device, unsigned char credits)
 	status = win32_ble_characteristic_write (device->base.context, device->hService, &device->characteristic_rx_credits, &credits, sizeof(credits));
 #endif
 
+#ifdef HAVE_GLIB
+	status = bluez_ble_characteristic_write (device->bluez, &device->characteristic_rx_credits, &credits, sizeof(credits));
+#endif
 	if (status != DC_STATUS_SUCCESS) {
 		return status;
 	}
@@ -530,6 +610,31 @@ on_win32_ble_notify (BTH_LE_GATT_EVENT_TYPE type, void *parameter, void *userdat
 	}
 }
 #endif
+#endif
+
+#ifdef HAVE_GLIB
+static void
+on_bluez_ble_notify (bluez_ble_t *bluez, const bluez_ble_characteristic_t *characteristic, const unsigned char data[], size_t size, void *userdata)
+{
+	dc_ble_t *device = userdata;
+
+	if (characteristic->handle == device->characteristic_tx.handle) {
+		dc_buffer_t *packet = dc_buffer_new (size);
+		dc_buffer_append (packet, data, size);
+		dc_queue_push (device->packets, packet);
+		if (device->flowcontrol) {
+			if (device->credits_tx > 0) {
+				device->credits_tx--;
+			}
+			if (device->credits_tx <= UART_CREDITS_MIN) {
+				ble_write_credits (device, UART_CREDITS_MAX - UART_CREDITS_MIN);
+			}
+		}
+	} else if (characteristic->handle == device->characteristic_tx_credits.handle) {
+		unsigned char credits = data[0];
+		device->credits_rx += credits;
+	}
+}
 #endif
 
 dc_status_t
@@ -733,6 +838,173 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	}
 #endif
 
+#ifdef HAVE_GLIB
+	device->bluez = NULL;
+	memset (&device->service, 0, sizeof (device->service));
+	memset (&device->characteristic_tx, 0, sizeof (device->characteristic_tx));
+	memset (&device->characteristic_rx, 0, sizeof (device->characteristic_rx));
+	memset (&device->characteristic_tx_credits, 0, sizeof (device->characteristic_tx_credits));
+	memset (&device->characteristic_rx_credits, 0, sizeof (device->characteristic_rx_credits));
+
+	status = bluez_ble_new (&device->bluez, context);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to open D-Bus connection.");
+		goto error_free_queue;
+	}
+
+	status = bluez_ble_connect (device->bluez, address);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to connect to device.");
+		goto error_free_bluez;
+	}
+
+	// Detected UART service.
+	bluez_ble_service_t *service = NULL;
+
+	// Get the BLE services.
+	size_t nservices = 0;
+	bluez_ble_service_t *services = NULL;
+	status = bluez_ble_get_services (device->bluez, &services, &nservices);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to get the BLE services.");
+		goto error_free_bluez;
+	}
+
+	for (size_t i = 0; i < nservices; i++) {
+		char service_buf[DC_BLE_UUID_SIZE] = {0};
+		const char *service_uuid = dc_ble_uuid2str (services[i].uuid, service_buf, sizeof(service_buf));
+
+		INFO (context, "\t\tService: handle=%04x, uuid=%s",
+			services[i].handle,
+			service_uuid);
+
+		// Check for a known UART service.
+		const dc_ble_uart_t *uart = dc_ble_uart_find (service_uuid);
+
+		// Detected UART characteristics.
+		bluez_ble_characteristic_t *characteristic_rx = NULL;
+		bluez_ble_characteristic_t *characteristic_tx = NULL;
+		bluez_ble_characteristic_t *characteristic_rx_credits = NULL;
+		bluez_ble_characteristic_t *characteristic_tx_credits = NULL;
+
+		// Get the BLE characteristics.
+		size_t ncharacteristics = 0;
+		bluez_ble_characteristic_t *characteristics = NULL;
+		status = bluez_ble_get_characteristics (device->bluez, &services[i], &characteristics, &ncharacteristics);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to get the BLE characteristics.");
+			goto error_free_bluez;
+		}
+
+		for (size_t j = 0; j < ncharacteristics; j++) {
+			char characteristic_buf[DC_BLE_UUID_SIZE] = {0};
+			const char *characteristic_uuid = dc_ble_uuid2str (characteristics[j].uuid, characteristic_buf, sizeof(characteristic_buf));
+
+			INFO (context, "\t\t\tCharacteristic: handle=%04x, uuid=%s, flags=%s%s%s%s%s%s%s, mtu=%u",
+				characteristics[j].handle,
+				characteristic_uuid,
+				characteristics[j].flags & GATT_PROP_BROADCAST ? "B" : "",
+				characteristics[j].flags & GATT_PROP_READ ? "R" : "",
+				characteristics[j].flags & GATT_PROP_WRITE ? "W" : "",
+				characteristics[j].flags & GATT_PROP_WRITE_WITHOUT_RESPONSE ? "(WWR)" : "",
+				0 ? "S" : "",
+				characteristics[j].flags & GATT_PROP_NOTIFY ? "N" : "",
+				characteristics[j].flags & GATT_PROP_INDICATE ? "I" : "",
+				characteristics[j].mtu);
+
+			// Get the BLE descriptors.
+			size_t ndescriptors = 0;
+			bluez_ble_descriptor_t *descriptors = NULL;
+			status = bluez_ble_get_descriptors (device->bluez, &characteristics[j], &descriptors, &ndescriptors);
+			if (status != DC_STATUS_SUCCESS) {
+				ERROR (context, "Failed to get the BLE characteristics.");
+				goto error_free_bluez;
+			}
+
+			for (size_t k = 0; k < ndescriptors; k++) {
+				char descriptor_buf[DC_BLE_UUID_SIZE] = {0};
+				const char *descriptor_uuid = dc_ble_uuid2str (descriptors[k].uuid, descriptor_buf, sizeof(descriptor_buf));
+
+				INFO (context, "\t\t\t\tDescriptor: handle=%04x, uuid=%s",
+					descriptors[k].handle,
+					descriptor_uuid);
+			}
+
+			free (descriptors);
+
+			if (uart) {
+				if (uart->characteristics.rx &&
+					strcasecmp (uart->characteristics.rx, characteristic_uuid) == 0) {
+					characteristic_rx = characteristics + j;
+					DEBUG (context, "RX: %s", characteristic_uuid);
+				}
+				if (uart->characteristics.tx &&
+					strcasecmp (uart->characteristics.tx, characteristic_uuid) == 0) {
+					characteristic_tx = characteristics + j;
+					DEBUG (context, "TX: %s", characteristic_uuid);
+				}
+				if (uart->characteristics.rx_credits &&
+					strcasecmp (uart->characteristics.rx_credits, characteristic_uuid) == 0) {
+					characteristic_rx_credits = characteristics + j;
+					DEBUG (context, "RX Credits: %s", characteristic_uuid);
+				}
+				if (uart->characteristics.tx_credits &&
+					strcasecmp (uart->characteristics.tx_credits, characteristic_uuid) == 0) {
+					characteristic_tx_credits = characteristics + j;
+					DEBUG (context, "TX Credits: %s", characteristic_uuid);
+				}
+			}
+		}
+
+		if (service == NULL && uart && characteristic_rx && characteristic_tx) {
+			service = services + i;
+			device->service = *service;
+			device->characteristic_rx = *characteristic_rx;
+			device->characteristic_tx = *characteristic_tx;
+			if (characteristic_rx_credits && characteristic_tx_credits) {
+				device->characteristic_rx_credits = *characteristic_rx_credits;
+				device->characteristic_tx_credits = *characteristic_tx_credits;
+				device->flowcontrol = 1;
+			}
+		}
+
+		free (characteristics);
+	}
+
+	free (services);
+
+	if (service == NULL) {
+		ERROR (context, "No uart service found.");
+		status = DC_STATUS_IO;
+		goto error_free_bluez;
+	}
+
+	// Enable notifications for the Tx credits characteristic.
+	if (device->flowcontrol) {
+		status = bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx_credits, on_bluez_ble_notify, device);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to enable notifications for the Tx credits characteristic.");
+			goto error_free_bluez;
+		}
+	}
+
+	// Enable notifications for the Tx characteristic.
+	status = bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx, on_bluez_ble_notify, device);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to enable notifications for the Tx characteristic.");
+		goto error_free_bluez;
+	}
+
+	// Write the initial credits.
+	if (device->flowcontrol) {
+		status = ble_write_credits (device, UART_CREDITS_MAX);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to write the initial credits.");
+			goto error_free_bluez;
+		}
+	}
+#endif
+
 	*out = (dc_iostream_t *) device;
 
 	return DC_STATUS_SUCCESS;
@@ -746,6 +1018,11 @@ error_close_service:
 	CloseHandle (device->hService);
 error_close_device:
 	CloseHandle (device->hDevice);
+#endif
+
+#ifdef HAVE_GLIB
+error_free_bluez:
+	bluez_ble_free (device->bluez);
 #endif
 error_free_queue:
 	dc_queue_free (device->packets);
@@ -771,6 +1048,17 @@ dc_ble_close (dc_iostream_t *abstract)
 	}
 	CloseHandle (device->hService);
 	CloseHandle (device->hDevice);
+#endif
+
+#ifdef HAVE_GLIB
+	bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx, NULL, NULL);
+
+	if (device->flowcontrol) {
+		bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx_credits, NULL, NULL);
+	}
+
+	bluez_ble_disconnect (device->bluez);
+	bluez_ble_free (device->bluez);
 #endif
 
 	dc_queue_free (device->packets);
@@ -849,12 +1137,15 @@ dc_ble_write (dc_iostream_t *abstract, const void *data, size_t size, size_t *ac
 
 #ifdef _WIN32
 	status = win32_ble_characteristic_write (abstract->context, device->hService, &device->characteristic_rx, data, size);
+#endif
+#ifdef HAVE_GLIB
+	status = bluez_ble_characteristic_write (device->bluez, &device->characteristic_rx, data, size);
+#endif
 	if (status != DC_STATUS_SUCCESS) {
 		goto out;
 	}
 
 	nbytes = size;
-#endif
 
 	if (device->flowcontrol) {
 		device->credits_rx--;

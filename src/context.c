@@ -336,6 +336,9 @@ dc_context_get_transports (dc_context_t *context)
 #ifdef HAVE_BLUEZ
 		| DC_TRANSPORT_BLUETOOTH
 #endif
+#ifdef HAVE_GLIB
+		| DC_TRANSPORT_BLE
+#endif
 #endif /* _WIN32 */
 	;
 }
