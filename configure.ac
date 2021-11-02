@@ -132,7 +132,7 @@ AS_IF([test "x$with_bluez" != "xno"], [
 AC_SUBST([DEPENDENCIES])
 
 # Checks for Windows bluetooth support.
-AC_CHECK_HEADERS([winsock2.h ws2bth.h], , , [
+AC_CHECK_HEADERS([winsock2.h ws2bth.h bluetoothleapis.h], , , [
 #if HAVE_WINSOCK2_H
 #   include <winsock2.h>
 # endif
@@ -225,11 +225,12 @@ fi
 if test "$platform" = "windows"; then
 	transport_irda="$ac_cv_header_af_irda_h"
 	transport_bluetooth="$ac_cv_header_ws2bth_h"
+	transport_ble="$ac_cv_header_bluetoothleapis_h"
 else
 	transport_irda="$ac_cv_header_linux_irda_h"
 	transport_bluetooth="${have_bluez-no}"
+	transport_ble="no"
 fi
-transport_ble="no"
 
 AC_CONFIG_FILES([
    libdivecomputer.pc

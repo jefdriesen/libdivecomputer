@@ -326,6 +326,9 @@ dc_context_get_transports (dc_context_t *context)
 #ifdef HAVE_WS2BTH_H
 		| DC_TRANSPORT_BLUETOOTH
 #endif
+#ifdef HAVE_BLUETOOTHLEAPIS_H
+		| DC_TRANSPORT_BLE
+#endif
 #else /* _WIN32 */
 #ifdef HAVE_LINUX_IRDA_H
 		| DC_TRANSPORT_IRDA

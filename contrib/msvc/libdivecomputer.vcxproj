@@ -90,13 +90,13 @@
     <ClCompile>
       <Optimization>Disabled</Optimization>
       <AdditionalIncludeDirectories>..\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;_DEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;_DEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;HAVE_BLUETOOTHLEAPIS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader />
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;setupapi.lib;bluetoothapis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>$(OutDir)libdivecomputer.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -109,14 +109,14 @@
     <ClCompile>
       <Optimization>Disabled</Optimization>
       <AdditionalIncludeDirectories>..\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;_DEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;_DEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;HAVE_BLUETOOTHLEAPIS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;setupapi.lib;bluetoothapis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>$(OutDir)libdivecomputer.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -130,14 +130,14 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <AdditionalIncludeDirectories>..\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;NDEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;NDEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;HAVE_BLUETOOTHLEAPIS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader />
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;setupapi.lib;bluetoothapis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>$(OutDir)libdivecomputer.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -153,7 +153,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <AdditionalIncludeDirectories>..\..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;NDEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;NDEBUG;_WINDOWS;_USRDLL;LIBDIVECOMPUTER_EXPORTS;ENABLE_LOGGING;HAVE_VERSION_SUFFIX;HAVE_AF_IRDA_H;HAVE_WS2BTH_H;HAVE_BLUETOOTHLEAPIS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader>
       </PrecompiledHeader>
@@ -161,7 +161,7 @@
       <SDLCheck>true</SDLCheck>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;setupapi.lib;bluetoothapis.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>$(OutDir)libdivecomputer.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -177,6 +177,7 @@
     <ClCompile Include="..\..\src\array.c" />
     <ClCompile Include="..\..\src\atomics_cobalt.c" />
     <ClCompile Include="..\..\src\atomics_cobalt_parser.c" />
+    <ClCompile Include="..\..\src\ble-win32.c" />
     <ClCompile Include="..\..\src\ble.c" />
     <ClCompile Include="..\..\src\bluetooth.c" />
     <ClCompile Include="..\..\src\buffer.c" />
@@ -325,6 +326,7 @@
     <ClInclude Include="..\..\src\aes.h" />
     <ClInclude Include="..\..\src\array.h" />
     <ClInclude Include="..\..\src\atomics_cobalt.h" />
+    <ClInclude Include="..\..\src\ble-win32.h" />
     <ClInclude Include="..\..\src\checksum.h" />
     <ClInclude Include="..\..\src\citizen_aqualand.h" />
     <ClInclude Include="..\..\src\cochran_commander.h" />

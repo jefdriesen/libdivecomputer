@@ -27,13 +27,19 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include "ble-win32.h"
+#endif
+
 #include <libdivecomputer/ble.h>
+#include <libdivecomputer/buffer.h>
 
 #include "common-private.h"
 #include "context-private.h"
 #include "iostream-private.h"
 #include "iterator-private.h"
 #include "platform.h"
+#include "queue.h"
 
 #ifdef _WIN32
 #define DC_ADDRESS_FORMAT "%012I64X"
@@ -71,6 +77,10 @@ static dc_status_t dc_ble_close (dc_iostream_t *iostream);
 typedef struct dc_ble_iterator_t {
 	dc_iterator_t base;
 	dc_descriptor_t *descriptor;
+#ifdef _WIN32
+	HDEVINFO hDI;
+	DWORD current;
+#endif
 } dc_ble_iterator_t;
 
 typedef struct dc_ble_uart_t {
@@ -91,6 +101,17 @@ typedef struct dc_ble_t {
 	unsigned char credits_tx;
 	unsigned char credits_rx;
 	dc_queue_t *packets;
+#ifdef _WIN32
+	HANDLE hDevice;
+	HANDLE hService;
+	BLUETOOTH_GATT_EVENT_HANDLE hEvent;
+	BLUETOOTH_GATT_EVENT_HANDLE hEventCredits;
+	BTH_LE_GATT_SERVICE service;
+	BTH_LE_GATT_CHARACTERISTIC characteristic_tx;
+	BTH_LE_GATT_CHARACTERISTIC characteristic_rx;
+	BTH_LE_GATT_CHARACTERISTIC characteristic_tx_credits;
+	BTH_LE_GATT_CHARACTERISTIC characteristic_rx_credits;
+#endif
 } dc_ble_t;
 
 static const dc_iterator_vtable_t dc_ble_iterator_vtable = {
@@ -367,7 +388,18 @@ dc_ble_iterator_new (dc_iterator_t **out, dc_context_t *context, dc_descriptor_t
 		return DC_STATUS_NOMEMORY;
 	}
 
-	// TODO
+#ifdef _WIN32
+	HDEVINFO hDI = SetupDiGetClassDevs (&GUID_BLUETOOTHLE_DEVICE_INTERFACE, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
+	if (hDI == INVALID_HANDLE_VALUE) {
+		DWORD errcode = GetLastError ();
+		SYSERROR (context, errcode);
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+	iterator->hDI = hDI;
+	iterator->current = 0;
+#endif
 
 	iterator->descriptor = descriptor;
 
@@ -390,7 +422,42 @@ dc_ble_iterator_next (dc_iterator_t *abstract, void *out)
 	dc_ble_iterator_t *iterator = (dc_ble_iterator_t *) abstract;
 	dc_ble_device_t *device = NULL;
 
-	// TODO
+#ifdef _WIN32
+	SP_DEVINFO_DATA did = {0};
+	did.cbSize = sizeof(SP_DEVINFO_DATA);
+	while (SetupDiEnumDeviceInfo (iterator->hDI, iterator->current++, &did)) {
+		char *name = win32_ble_get_name (abstract->context, iterator->hDI, &did);
+		dc_ble_address_t address = win32_ble_get_address (abstract->context, iterator->hDI, &did);
+
+		INFO (abstract->context, "Discover: address=" DC_ADDRESS_FORMAT ", name=%s",
+			address, name ? name : "");
+
+		if (!dc_descriptor_filter (iterator->descriptor, DC_TRANSPORT_BLE, name)) {
+			free (name);
+			continue;
+		}
+
+		device = (dc_ble_device_t *) malloc (sizeof(dc_ble_device_t));
+		if (device == NULL) {
+			free (name);
+			return DC_STATUS_NOMEMORY;
+		}
+
+		device->address = address;
+		if (name) {
+			strncpy(device->name, name, sizeof(device->name) - 1);
+			device->name[sizeof(device->name) - 1] = '\0';
+		} else {
+			memset(device->name, 0, sizeof(device->name));
+		}
+
+		free (name);
+
+		*(dc_ble_device_t **) out = device;
+
+		return DC_STATUS_SUCCESS;
+	}
+#endif
 
 	return DC_STATUS_DONE;
 }
@@ -400,10 +467,69 @@ dc_ble_iterator_free (dc_iterator_t *abstract)
 {
 	dc_ble_iterator_t *iterator = (dc_ble_iterator_t *) abstract;
 
-	// TODO
+#ifdef _WIN32
+	SetupDiDestroyDeviceInfoList (iterator->hDI);
+#endif
 
 	return DC_STATUS_SUCCESS;
 }
+#endif
+
+#ifdef BLE
+static dc_status_t
+ble_write_credits (dc_ble_t *device, unsigned char credits)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+
+#ifdef _WIN32
+	status = win32_ble_characteristic_write (device->base.context, device->hService, &device->characteristic_rx_credits, &credits, sizeof(credits));
+#endif
+
+	if (status != DC_STATUS_SUCCESS) {
+		return status;
+	}
+
+	device->credits_tx += credits;
+
+	return status;
+}
+
+#ifdef _WIN32
+static void CALLBACK
+on_win32_ble_notify (BTH_LE_GATT_EVENT_TYPE type, void *parameter, void *userdata)
+{
+	dc_ble_t *device = userdata;
+
+	if (type != CharacteristicValueChangedEvent || parameter == NULL) {
+		return;
+	}
+
+	BLUETOOTH_GATT_VALUE_CHANGED_EVENT *event = parameter;
+	BTH_LE_GATT_CHARACTERISTIC_VALUE *value = event->CharacteristicValue;
+
+	if (value->DataSize == 0) {
+		return;
+	}
+
+	if (event->ChangedAttributeHandle == device->characteristic_tx.AttributeHandle) {
+		dc_buffer_t *packet = dc_buffer_new (value->DataSize);
+		dc_buffer_append (packet, value->Data, value->DataSize);
+		dc_queue_push (device->packets, packet);
+		if (device->flowcontrol) {
+			if (device->credits_tx > 0) {
+				device->credits_tx--;
+			}
+			if (device->credits_tx <= UART_CREDITS_MIN) {
+				ble_write_credits (device, UART_CREDITS_MAX - UART_CREDITS_MIN);
+			}
+		}
+	} else if (event->ChangedAttributeHandle == device->characteristic_tx_credits.AttributeHandle) {
+		unsigned char credits = value->Data[0];
+
+		device->credits_rx += credits;
+	}
+}
+#endif
 #endif
 
 dc_status_t
@@ -436,12 +562,193 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 		goto error_free;
 	}
 
-	// TODO
+#ifdef _WIN32
+	device->hDevice = INVALID_HANDLE_VALUE;
+	device->hService = INVALID_HANDLE_VALUE;
+	device->hEvent = INVALID_HANDLE_VALUE;
+	device->hEventCredits = INVALID_HANDLE_VALUE;
+	memset (&device->service, 0, sizeof (device->service));
+	memset (&device->characteristic_tx, 0, sizeof (device->characteristic_tx));
+	memset (&device->characteristic_rx, 0, sizeof (device->characteristic_rx));
+	memset (&device->characteristic_tx_credits, 0, sizeof (device->characteristic_tx_credits));
+	memset (&device->characteristic_rx_credits, 0, sizeof (device->characteristic_rx_credits));
+
+	// Open the BLE device.
+	status = win32_ble_open (&device->hDevice, context, GUID_BLUETOOTHLE_DEVICE_INTERFACE, address);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to open the BLE device.");
+		goto error_free_queue;
+	}
+
+	// Detected UART service.
+	BTH_LE_GATT_SERVICE *service = NULL;
+
+	// Get the BLE services.
+	size_t nservices = 0;
+	BTH_LE_GATT_SERVICE *services = NULL;
+	status = win32_ble_get_services (context, device->hDevice, &services, &nservices);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to get the BLE services.");
+		goto error_close_device;
+	}
+
+	for (size_t i = 0; i < nservices; i++) {
+		char service_buf[DC_BLE_UUID_SIZE] = {0};
+		const char *service_uuid = win32_ble_uuid2str (services[i].ServiceUuid, service_buf, sizeof(service_buf));
+
+		INFO (context, "Service: handle=%04x, uuid=%s",
+			services[i].AttributeHandle, service_uuid);
+
+		// Check for a known UART service.
+		const dc_ble_uart_t *uart = dc_ble_uart_find (service_uuid);
+
+		// Detected UART characteristics.
+		BTH_LE_GATT_CHARACTERISTIC *characteristic_rx = NULL;
+		BTH_LE_GATT_CHARACTERISTIC *characteristic_tx = NULL;
+		BTH_LE_GATT_CHARACTERISTIC *characteristic_rx_credits = NULL;
+		BTH_LE_GATT_CHARACTERISTIC *characteristic_tx_credits = NULL;
+
+		// Get the BLE characteristics.
+		size_t ncharacteristics = 0;
+		BTH_LE_GATT_CHARACTERISTIC *characteristics = NULL;
+		status = win32_ble_get_characteristics (context, device->hDevice, services + i, &characteristics, &ncharacteristics);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to get the BLE characteristics.");
+			goto error_close_device;
+		}
+
+		for (size_t j = 0; j < ncharacteristics; j++) {
+			char characteristic_buf[DC_BLE_UUID_SIZE] = {0};
+			const char *characteristic_uuid = win32_ble_uuid2str (characteristics[j].CharacteristicUuid, characteristic_buf, sizeof(characteristic_buf));
+
+			INFO (context, "\tCharacteristic: handle=%04x, uuid=%s, flags=%s%s%s%s%s%s%s",
+				characteristics[j].AttributeHandle, characteristic_uuid,
+				characteristics[j].IsBroadcastable ? "B" : "",
+				characteristics[j].IsReadable ? "R" : "",
+				characteristics[j].IsWritable ? "W" : "",
+				characteristics[j].IsWritableWithoutResponse ? "(WWR)" : "",
+				characteristics[j].IsSignedWritable ? "S" : "",
+				characteristics[j].IsNotifiable ? "N" : "",
+				characteristics[j].IsIndicatable ? "I" : "");
+
+			// Get the BLE descriptors.
+			size_t ndescriptors = 0;
+			BTH_LE_GATT_DESCRIPTOR *descriptors = NULL;
+			status = win32_ble_get_descriptors (context, device->hDevice, characteristics + j, &descriptors, &ndescriptors);
+			if (status != DC_STATUS_SUCCESS) {
+				ERROR (context, "Failed to get the BLE descriptors.");
+				goto error_close_device;
+			}
+
+			for (size_t k = 0; k < ndescriptors; k++) {
+				char descriptor_buf[DC_BLE_UUID_SIZE] = {0};
+				const char *descriptor_uuid = win32_ble_uuid2str (descriptors[k].DescriptorUuid, descriptor_buf, sizeof(descriptor_buf));
+
+				INFO (context, "\t\tDescriptor: handle=%04x, uuid=%s, type=%d",
+					descriptors[k].AttributeHandle, descriptor_uuid, descriptors[k].DescriptorType);
+			}
+
+			free (descriptors);
+
+			if (uart) {
+				if (uart->characteristics.rx &&
+					strcasecmp (uart->characteristics.rx, characteristic_uuid) == 0) {
+					characteristic_rx = characteristics + j;
+					DEBUG (context, "RX: %s", characteristic_uuid);
+				}
+				if (uart->characteristics.tx &&
+					strcasecmp (uart->characteristics.tx, characteristic_uuid) == 0) {
+					characteristic_tx = characteristics + j;
+					DEBUG (context, "TX: %s", characteristic_uuid);
+				}
+				if (uart->characteristics.rx_credits &&
+					strcasecmp (uart->characteristics.rx_credits, characteristic_uuid) == 0) {
+					characteristic_rx_credits = characteristics + j;
+					DEBUG (context, "RX Credits: %s", characteristic_uuid);
+				}
+				if (uart->characteristics.tx_credits &&
+					strcasecmp (uart->characteristics.tx_credits, characteristic_uuid) == 0) {
+					characteristic_tx_credits = characteristics + j;
+					DEBUG (context, "TX Credits: %s", characteristic_uuid);
+				}
+			}
+		}
+
+		if (service == NULL && uart && characteristic_rx && characteristic_tx) {
+			service = services + i;
+			device->service = *service;
+			device->characteristic_rx = *characteristic_rx;
+			device->characteristic_tx = *characteristic_tx;
+			if (characteristic_rx_credits && characteristic_tx_credits) {
+				device->characteristic_rx_credits = *characteristic_rx_credits;
+				device->characteristic_tx_credits = *characteristic_tx_credits;
+				device->flowcontrol = 1;
+			}
+		}
+
+		free (characteristics);
+	}
+
+	free (services);
+
+	if (service == NULL) {
+		ERROR (context, "No uart service found.");
+		status = DC_STATUS_IO;
+		goto error_close_device;
+	}
+
+	// Get the service GUID.
+	GUID guid = win32_ble_uuid2guid (device->service.ServiceUuid);
+
+	// Open the BLE service.
+	status = win32_ble_open (&device->hService, context, guid, address);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to open the BLE service.");
+		goto error_close_device;
+	}
+
+	// Enable notifications for the Tx credits characteristic.
+	if (device->flowcontrol) {
+		status = win32_ble_characteristic_notify (&device->hEventCredits, context, device->hService, &device->characteristic_tx_credits, (PFNBLUETOOTH_GATT_EVENT_CALLBACK) on_win32_ble_notify, device);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to enable notifications for the Tx credits characteristic.");
+			goto error_close_service;
+		}
+	}
+
+	// Enable notifications for the Tx characteristic.
+	status = win32_ble_characteristic_notify (&device->hEvent, context, device->hService, &device->characteristic_tx, (PFNBLUETOOTH_GATT_EVENT_CALLBACK) on_win32_ble_notify, device);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (context, "Failed to enable notifications for the Tx characteristic.");
+		goto error_unregister_credits;
+	}
+
+	// Write the initial credits.
+	if (device->flowcontrol) {
+		status = ble_write_credits (device, UART_CREDITS_MAX);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to write the initial credits.");
+			goto error_unregister_data;
+		}
+	}
+#endif
 
 	*out = (dc_iostream_t *) device;
 
 	return DC_STATUS_SUCCESS;
 
+#ifdef _WIN32
+error_unregister_data:
+	BluetoothGATTUnregisterEvent (device->hEvent, BLUETOOTH_GATT_FLAG_NONE);
+error_unregister_credits:
+	BluetoothGATTUnregisterEvent (device->hEventCredits, BLUETOOTH_GATT_FLAG_NONE);
+error_close_service:
+	CloseHandle (device->hService);
+error_close_device:
+	CloseHandle (device->hDevice);
+#endif
+error_free_queue:
+	dc_queue_free (device->packets);
 error_free:
 	dc_iostream_deallocate ((dc_iostream_t *) device);
 	return status;
@@ -457,7 +764,14 @@ dc_ble_close (dc_iostream_t *abstract)
 	dc_status_t status = DC_STATUS_SUCCESS;
 	dc_ble_t *device = (dc_ble_t *) abstract;
 
-	// TODO
+#ifdef _WIN32
+	BluetoothGATTUnregisterEvent (device->hEvent, BLUETOOTH_GATT_FLAG_NONE);
+	if (device->flowcontrol) {
+		BluetoothGATTUnregisterEvent (device->hEventCredits, BLUETOOTH_GATT_FLAG_NONE);
+	}
+	CloseHandle (device->hService);
+	CloseHandle (device->hDevice);
+#endif
 
 	dc_queue_free (device->packets);
 
@@ -533,7 +847,14 @@ dc_ble_write (dc_iostream_t *abstract, const void *data, size_t size, size_t *ac
 		}
 	}
 
-	// TODO
+#ifdef _WIN32
+	status = win32_ble_characteristic_write (abstract->context, device->hService, &device->characteristic_rx, data, size);
+	if (status != DC_STATUS_SUCCESS) {
+		goto out;
+	}
+
+	nbytes = size;
+#endif
 
 	if (device->flowcontrol) {
 		device->credits_rx--;

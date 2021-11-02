@@ -10,7 +10,7 @@ libdivecomputer_la_LDFLAGS = \
 	-export-symbols libdivecomputer.exp
 
 if OS_WIN32
-libdivecomputer_la_LIBADD += -lws2_32
+libdivecomputer_la_LIBADD += -lws2_32 -lsetupapi -lbluetoothapis
 libdivecomputer_la_LDFLAGS += -Wc,-static-libgcc
 endif
 
@@ -91,6 +91,7 @@ libdivecomputer_la_SOURCES = \
 	usb.c \
 	usbhid.c \
 	ble.c \
+	ble-win32.h ble-win32.c \
 	bluetooth.c \
 	custom.c
 
