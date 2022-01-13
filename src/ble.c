@@ -69,6 +69,16 @@ typedef struct dc_ble_iterator_t {
 	dc_descriptor_t *descriptor;
 } dc_ble_iterator_t;
 
+typedef struct dc_ble_uart_t {
+	const char *service;
+	struct {
+		const char *rx;
+		const char *tx;
+		const char *rx_credits;
+		const char *tx_credits;
+	} characteristics;
+} dc_ble_uart_t;
+
 typedef struct dc_ble_t {
 	dc_iostream_t base;
 	char name[248];
@@ -99,6 +109,100 @@ static const dc_iostream_vtable_t dc_ble_vtable = {
 	dc_ble_sleep, /* sleep */
 	dc_ble_close, /* close */
 };
+
+static const dc_ble_uart_t g_uarts[] = {
+	// Telit/Stollmann (Heinrichs Weikamp)
+	{"0000fefb-0000-1000-8000-00805f9b34fb", {
+		"00000001-0000-1000-8000-008025000000",
+		"00000002-0000-1000-8000-008025000000",
+		"00000003-0000-1000-8000-008025000000",
+		"00000004-0000-1000-8000-008025000000"}},
+	// U-Blox (Heinrichs Weikamp)
+	{"2456e1b9-26e2-8f83-e744-f34f01e9d701", {
+		"2456e1b9-26e2-8f83-e744-f34f01e9d703",
+		"2456e1b9-26e2-8f83-e744-f34f01e9d703",
+		"2456e1b9-26e2-8f83-e744-f34f01e9d704",
+		"2456e1b9-26e2-8f83-e744-f34f01e9d704"}},
+	// Nordic Semiconductor (Deepblu, Oceans, Divesoft)
+	{"6e400001-b5a3-f393-e0a9-e50e24dcca9e", {
+		"6e400002-b5a3-f393-e0a9-e50e24dcca9e",
+		"6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+		NULL, NULL}},
+	// Microchip (Ratio, McLean)
+	{"49535343-fe7d-4ae5-8fa9-9fafd205e455", {
+		"49535343-8841-43f4-a8d4-ecbe34729bb3",
+		"49535343-1e4d-4bd9-ba61-23c647249616",
+		NULL, NULL}},
+	// Shearwater
+	{"fe25c237-0ece-443c-b0aa-e02033e7029d", {
+		"27b7570b-359e-45a3-91bb-cf7e70049bd2",
+		"27b7570b-359e-45a3-91bb-cf7e70049bd2",
+		NULL, NULL}},
+	// Mares
+	{"544e326b-5b72-c6b0-1c46-41c1bc448118", {
+		"99a91ebd-b21f-1689-bb43-681f1f55e966",
+		"1d1aae28-d2a8-91a1-1242-9d2973fbe571",
+		NULL, NULL}},
+	// Suunto
+	{"98ae7120-e62e-11e3-badd-0002a5d5c51b", {
+		"c6339440-e62e-11e3-a5b3-0002a5d5c51b",
+		"d0fd6b80-e62e-11e3-a2e9-0002a5d5c51b",
+		NULL, NULL}},
+	// ScubaPro
+	{"fdcdeaaa-295d-470e-bf15-04217b7aa0a0", {
+		"a188b7dd-debb-449a-852d-c243d46b4b1a",
+		"aa0c68f0-ea9c-493d-8112-62879e72af68",
+		NULL, NULL}},
+	// Pelagic
+	{"cb3c4555-d670-4670-bc20-b61dbc851e9a", {
+		"6606ab42-89d5-4a00-a8ce-4eb5e1414ee0",
+		"a60b8e5c-b267-44d7-9764-837caf96489e",
+		NULL, NULL}},
+	// Pelagic
+	{"ca7b0001-f785-4c38-b599-c7c5fbadb034", {
+		"ca7b0003-f785-4c38-b599-c7c5fbadb034",
+		"ca7b0002-f785-4c38-b599-c7c5fbadb034",
+		NULL, NULL}},
+	// Deep Six
+	{"f000ffe0-ab12-45ec-84c8-46483f4626e9", {
+		"f000ffe1-ab12-45ec-84c8-46483f4626e9",
+		"f000ffe1-ab12-45ec-84c8-46483f4626e9",
+		NULL, NULL}},
+	// Divesoft
+	{"0000fcef-0000-1000-8000-00805f9b34fb", {
+		"6e400002-b5a3-f393-e0a9-e50e24dcca9e",
+		"6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+		NULL, NULL}},
+	// Divesoft (16bit transitional)
+	{"0000fcef-0000-1000-8000-00805f9b34fb", {
+		"00000002-0000-1000-8000-00805f9b34fb",
+		"00000003-0000-1000-8000-00805f9b34fb",
+		NULL, NULL}},
+	// Halcyon Symbios
+	{"00000001-8c3b-4f2c-a59e-8c08224f3253", {
+		"00000101-8c3b-4f2c-a59e-8c08224f3253",
+		"00000201-8c3b-4f2c-a59e-8c08224f3253",
+		NULL, NULL}},
+	// Seac
+	{"84968ffe-d26d-478a-b953-5010bcf58bca", {
+		"43c620c2-1b09-4951-bc1e-9c75298cddeb",
+		"43c620c2-1b09-4951-bc1e-9c75298cddeb",
+		NULL, NULL}},
+};
+
+static const dc_ble_uart_t *
+dc_ble_uart_find (const char *service)
+{
+	if (service == NULL)
+		return NULL;
+
+	for (size_t i = 0; i < C_ARRAY_SIZE(g_uarts); ++i) {
+		if (strcasecmp (g_uarts[i].service, service) == 0)
+			return g_uarts + i;
+	}
+
+	return NULL;
+}
 #endif
 
 char *
