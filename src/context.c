@@ -32,13 +32,32 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
 #include <windows.h>
+#else
+#include <pthread.h>
 #endif
 
 #include "context-private.h"
 #include "platform.h"
 #include "timer.h"
 
+#ifdef _WIN32
+#define DC_MUTEX_INIT(mutex) InitializeCriticalSection (mutex)
+#define DC_MUTEX_FREE(mutex) DeleteCriticalSection (mutex)
+#define DC_MUTEX_LOCK(mutex) EnterCriticalSection (mutex)
+#define DC_MUTEX_UNLOCK(mutex) LeaveCriticalSection (mutex)
+#else
+#define DC_MUTEX_INIT(mutex) pthread_mutex_init (mutex, NULL)
+#define DC_MUTEX_FREE(mutex) pthread_mutex_destroy (mutex)
+#define DC_MUTEX_LOCK(mutex) pthread_mutex_lock (mutex)
+#define DC_MUTEX_UNLOCK(mutex) pthread_mutex_unlock (mutex)
+#endif
+
 struct dc_context_t {
+#ifdef _WIN32
+	CRITICAL_SECTION mutex;
+#else
+	pthread_mutex_t mutex;
+#endif
 	dc_loglevel_t loglevel;
 	dc_logfunc_t logfunc;
 	void *userdata;
@@ -116,6 +135,8 @@ dc_context_new (dc_context_t **out)
 	if (context == NULL)
 		return DC_STATUS_NOMEMORY;
 
+	DC_MUTEX_INIT (&context->mutex);
+
 #ifdef ENABLE_LOGGING
 	context->loglevel = DC_LOGLEVEL_WARNING;
 	context->logfunc = loghandler;
@@ -142,6 +163,7 @@ dc_context_free (dc_context_t *context)
 	if (context == NULL)
 		return DC_STATUS_SUCCESS;
 
+	DC_MUTEX_FREE (&context->mutex);
 #ifdef ENABLE_LOGGING
 	dc_timer_free (context->timer);
 #endif
@@ -157,7 +179,9 @@ dc_context_set_loglevel (dc_context_t *context, dc_loglevel_t loglevel)
 		return DC_STATUS_INVALIDARGS;
 
 #ifdef ENABLE_LOGGING
+	DC_MUTEX_LOCK (&context->mutex);
 	context->loglevel = loglevel;
+	DC_MUTEX_UNLOCK (&context->mutex);
 #endif
 
 	return DC_STATUS_SUCCESS;
@@ -170,8 +194,10 @@ dc_context_set_logfunc (dc_context_t *context, dc_logfunc_t logfunc, void *userd
 		return DC_STATUS_INVALIDARGS;
 
 #ifdef ENABLE_LOGGING
+	DC_MUTEX_LOCK (&context->mutex);
 	context->logfunc = logfunc;
 	context->userdata = userdata;
+	DC_MUTEX_UNLOCK (&context->mutex);
 #endif
 
 	return DC_STATUS_SUCCESS;
@@ -188,17 +214,20 @@ dc_context_log (dc_context_t *context, dc_loglevel_t loglevel, const char *file,
 		return DC_STATUS_INVALIDARGS;
 
 #ifdef ENABLE_LOGGING
-	if (loglevel > context->loglevel)
-		return DC_STATUS_SUCCESS;
+	DC_MUTEX_LOCK (&context->mutex);
 
-	if (context->logfunc == NULL)
+	if (loglevel > context->loglevel || context->logfunc == NULL) {
+		DC_MUTEX_UNLOCK (&context->mutex);
 		return DC_STATUS_SUCCESS;
+	};
 
 	va_start (ap, format);
 	dc_platform_vsnprintf (context->msg, sizeof (context->msg), format, ap);
 	va_end (ap);
 
 	context->logfunc (context, loglevel, file, line, function, context->msg, context->userdata);
+
+	DC_MUTEX_UNLOCK (&context->mutex);
 #endif
 
 	return DC_STATUS_SUCCESS;
@@ -255,11 +284,12 @@ dc_context_hexdump (dc_context_t *context, dc_loglevel_t loglevel, const char *f
 		return DC_STATUS_INVALIDARGS;
 
 #ifdef ENABLE_LOGGING
-	if (loglevel > context->loglevel)
-		return DC_STATUS_SUCCESS;
+	DC_MUTEX_LOCK (&context->mutex);
 
-	if (context->logfunc == NULL)
+	if (loglevel > context->loglevel || context->logfunc == NULL) {
+		DC_MUTEX_UNLOCK (&context->mutex);
 		return DC_STATUS_SUCCESS;
+	}
 
 	n = dc_platform_snprintf (context->msg, sizeof (context->msg), "%s: size=%u, data=", prefix, size);
 
@@ -268,6 +298,8 @@ dc_context_hexdump (dc_context_t *context, dc_loglevel_t loglevel, const char *f
 	}
 
 	context->logfunc (context, loglevel, file, line, function, context->msg, context->userdata);
+
+	DC_MUTEX_UNLOCK (&context->mutex);
 #endif
 
 	return DC_STATUS_SUCCESS;
