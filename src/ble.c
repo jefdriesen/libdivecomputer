@@ -45,6 +45,10 @@
 
 #define ISINSTANCE(device) dc_iostream_isinstance((device), &dc_ble_vtable)
 
+#define UART_CREDITS_MIN        16
+#define UART_CREDITS_MAX        32
+#define UART_CREDITS_DISCONNECT 255
+
 struct dc_ble_device_t {
 	dc_ble_address_t address;
 	char name[248];
@@ -83,6 +87,9 @@ typedef struct dc_ble_t {
 	dc_iostream_t base;
 	char name[248];
 	int timeout;
+	unsigned int flowcontrol;
+	unsigned char credits_tx;
+	unsigned char credits_rx;
 } dc_ble_t;
 
 static const dc_iterator_vtable_t dc_ble_iterator_vtable = {
@@ -418,6 +425,9 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 
 	memset (device->name, 0, sizeof(device->name));
 	device->timeout = -1;
+	device->flowcontrol = 0;
+	device->credits_rx = 0;
+	device->credits_tx = 0;
 
 	// TODO
 
@@ -490,7 +500,19 @@ dc_ble_write (dc_iostream_t *abstract, const void *data, size_t size, size_t *ac
 	dc_ble_t *device = (dc_ble_t *) abstract;
 	size_t nbytes = 0;
 
+	if (device->flowcontrol) {
+		// Wait for credits.
+		while (device->credits_rx == 0) {
+			WARNING (abstract->context, "Waiting for uart RX credits.");
+			dc_platform_sleep (10);
+		}
+	}
+
 	// TODO
+
+	if (device->flowcontrol) {
+		device->credits_rx--;
+	}
 
 out:
 	if (actual)
