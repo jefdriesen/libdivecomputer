@@ -574,7 +574,7 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	memset (&device->characteristic_rx_credits, 0, sizeof (device->characteristic_rx_credits));
 
 	// Open the BLE device.
-	status = win32_ble_open (&device->hDevice, context, GUID_BLUETOOTHLE_DEVICE_INTERFACE, address);
+	status = win32_ble_open (&device->hDevice, context, GUID_BLUETOOTHLE_DEVICE_INTERFACE, address, device->name, sizeof(device->name));
 	if (status != DC_STATUS_SUCCESS) {
 		ERROR (context, "Failed to open the BLE device.");
 		goto error_free_queue;
@@ -701,7 +701,7 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	GUID guid = win32_ble_uuid2guid (device->service.ServiceUuid);
 
 	// Open the BLE service.
-	status = win32_ble_open (&device->hService, context, guid, address);
+	status = win32_ble_open (&device->hService, context, guid, address, NULL, 0);
 	if (status != DC_STATUS_SUCCESS) {
 		ERROR (context, "Failed to open the BLE service.");
 		goto error_close_device;

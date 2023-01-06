@@ -66,7 +66,7 @@ dc_ble_uuid_t *
 win32_ble_uuid2uuid(BTH_LE_UUID uuid, dc_ble_uuid_t *result);
 
 dc_status_t
-win32_ble_open (HANDLE *out, dc_context_t *context, GUID guid, dc_ble_address_t address);
+win32_ble_open (HANDLE *out, dc_context_t *context, GUID guid, dc_ble_address_t address, char *name, size_t namelen);
 
 dc_status_t
 win32_ble_get_services(dc_context_t *context, HANDLE hFile, BTH_LE_GATT_SERVICE **out_services, size_t *out_nservices);

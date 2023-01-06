@@ -344,7 +344,7 @@ win32_ble_uuid2uuid(BTH_LE_UUID uuid, dc_ble_uuid_t *result)
 }
 
 dc_status_t
-win32_ble_open (HANDLE *out, dc_context_t *context, GUID guid, dc_ble_address_t address)
+win32_ble_open (HANDLE *out, dc_context_t *context, GUID guid, dc_ble_address_t address, char *name, size_t namelen)
 {
 	dc_status_t status = DC_STATUS_SUCCESS;
 	HANDLE hFile = INVALID_HANDLE_VALUE;
@@ -396,6 +396,11 @@ win32_ble_open (HANDLE *out, dc_context_t *context, GUID guid, dc_ble_address_t 
 		dc_ble_address_t addr = win32_ble_get_address (context, hDI, &dd);
 
 		if (addr == address) {
+			if (name) {
+				char *str = win32_ble_get_name (context, hDI, &dd);
+				strncpy (name, str, namelen);
+				free (str);
+			}
 			break;
 		}
 
