@@ -73,6 +73,7 @@
 	(model) == PUCK4)
 
 #define MAXRETRIES 4
+#define MAXDELAY   20
 
 #define MAXPACKET 244
 
@@ -124,6 +125,7 @@ typedef struct mares_iconhd_device_t {
 	unsigned int model;
 	unsigned int packetsize;
 	unsigned int ble;
+	unsigned int delay;
 } mares_iconhd_device_t;
 
 static dc_status_t mares_iconhd_device_set_fingerprint (dc_device_t *abstract, const unsigned char data[], unsigned int size);
@@ -236,6 +238,10 @@ mares_iconhd_packet_fixed (mares_iconhd_device_t *device,
 
 	// Send the command payload to the dive computer.
 	if (size && transport == DC_TRANSPORT_BLE) {
+		if (device->delay) {
+			dc_iostream_sleep (device->iostream, device->delay);
+		}
+
 		status = dc_iostream_write (device->iostream, data, size, NULL);
 		if (status != DC_STATUS_SUCCESS) {
 			ERROR (abstract->context, "Failed to send the command data.");
@@ -329,6 +335,10 @@ mares_iconhd_packet_variable (mares_iconhd_device_t *device,
 	}
 
 	if (size) {
+		if (device->delay) {
+			dc_iostream_sleep (device->iostream, device->delay);
+		}
+
 		// Send the command payload to the dive computer.
 		status = dc_iostream_write (device->iostream, data, size, NULL);
 		if (status != DC_STATUS_SUCCESS) {
@@ -410,6 +420,11 @@ mares_iconhd_transfer (mares_iconhd_device_t *device, unsigned char cmd, const u
 		// Abort if the maximum number of retries is reached.
 		if (nretries++ >= MAXRETRIES)
 			return rc;
+
+		// Increase the delay.
+		if (device->delay < MAXDELAY) {
+			device->delay++;
+		}
 
 		// Discard any garbage bytes.
 		dc_iostream_sleep (device->iostream, 1000);
@@ -564,6 +579,7 @@ mares_iconhd_device_open (dc_device_t **out, dc_context_t *context, dc_iostream_
 	device->model = 0;
 	device->packetsize = 0;
 	device->ble = ISSIRIUS(model) ? VARIABLE : FIXED;
+	device->delay = 0;
 
 	// Create the packet stream.
 	if (transport == DC_TRANSPORT_BLE && device->ble == FIXED) {
