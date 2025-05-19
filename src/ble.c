@@ -106,6 +106,7 @@ typedef struct dc_ble_t {
 	dc_iostream_t base;
 	char name[248];
 	int timeout;
+	unsigned int notify;
 	unsigned int flowcontrol;
 	unsigned char credits_tx;
 	unsigned char credits_rx;
@@ -657,6 +658,7 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 
 	memset (device->name, 0, sizeof(device->name));
 	device->timeout = -1;
+	device->notify = 0;
 	device->flowcontrol = 0;
 	device->credits_rx = 0;
 	device->credits_tx = 0;
@@ -784,6 +786,7 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 			device->service = *service;
 			device->characteristic_rx = *characteristic_rx;
 			device->characteristic_tx = *characteristic_tx;
+			device->notify = characteristic_tx->IsNotifiable || characteristic_tx->IsIndicatable;
 			if (characteristic_rx_credits && characteristic_tx_credits) {
 				device->characteristic_rx_credits = *characteristic_rx_credits;
 				device->characteristic_tx_credits = *characteristic_tx_credits;
@@ -822,10 +825,12 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	}
 
 	// Enable notifications for the Tx characteristic.
-	status = win32_ble_characteristic_notify (&device->hEvent, context, device->hService, &device->characteristic_tx, (PFNBLUETOOTH_GATT_EVENT_CALLBACK) on_win32_ble_notify, device);
-	if (status != DC_STATUS_SUCCESS) {
-		ERROR (context, "Failed to enable notifications for the Tx characteristic.");
-		goto error_unregister_credits;
+	if (device->notify) {
+		status = win32_ble_characteristic_notify (&device->hEvent, context, device->hService, &device->characteristic_tx, (PFNBLUETOOTH_GATT_EVENT_CALLBACK) on_win32_ble_notify, device);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to enable notifications for the Tx characteristic.");
+			goto error_unregister_credits;
+		}
 	}
 
 	// Write the initial credits.
@@ -961,6 +966,9 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 			device->service = *service;
 			device->characteristic_rx = *characteristic_rx;
 			device->characteristic_tx = *characteristic_tx;
+			device->notify =
+				characteristic_tx->flags & GATT_PROP_NOTIFY ||
+				characteristic_tx->flags & GATT_PROP_INDICATE;
 			if (characteristic_rx_credits && characteristic_tx_credits) {
 				device->characteristic_rx_credits = *characteristic_rx_credits;
 				device->characteristic_tx_credits = *characteristic_tx_credits;
@@ -989,10 +997,12 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	}
 
 	// Enable notifications for the Tx characteristic.
-	status = bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx, on_bluez_ble_notify, device);
-	if (status != DC_STATUS_SUCCESS) {
-		ERROR (context, "Failed to enable notifications for the Tx characteristic.");
-		goto error_free_bluez;
+	if (device->notify) {
+		status = bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx, on_bluez_ble_notify, device);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (context, "Failed to enable notifications for the Tx characteristic.");
+			goto error_free_bluez;
+		}
 	}
 
 	// Write the initial credits.
@@ -1042,7 +1052,9 @@ dc_ble_close (dc_iostream_t *abstract)
 	dc_ble_t *device = (dc_ble_t *) abstract;
 
 #ifdef _WIN32
-	BluetoothGATTUnregisterEvent (device->hEvent, BLUETOOTH_GATT_FLAG_NONE);
+	if (device->notify) {
+		BluetoothGATTUnregisterEvent (device->hEvent, BLUETOOTH_GATT_FLAG_NONE);
+	}
 	if (device->flowcontrol) {
 		BluetoothGATTUnregisterEvent (device->hEventCredits, BLUETOOTH_GATT_FLAG_NONE);
 	}
@@ -1051,7 +1063,9 @@ dc_ble_close (dc_iostream_t *abstract)
 #endif
 
 #ifdef HAVE_GLIB
-	bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx, NULL, NULL);
+	if (device->notify) {
+		bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx, NULL, NULL);
+	}
 
 	if (device->flowcontrol) {
 		bluez_ble_characteristic_notify (device->bluez, &device->characteristic_tx_credits, NULL, NULL);
@@ -1095,24 +1109,37 @@ dc_ble_read (dc_iostream_t *abstract, void *data, size_t size, size_t *actual)
 	dc_ble_t *device = (dc_ble_t *) abstract;
 	size_t nbytes = 0;
 
-	dc_buffer_t *packet = dc_queue_pop (device->packets, device->timeout);
-	if (packet == NULL) {
-		status = DC_STATUS_TIMEOUT;
-		goto out;
-	}
+	if (device->notify) {
+		dc_buffer_t *packet = dc_queue_pop (device->packets, device->timeout);
+		if (packet == NULL) {
+			status = DC_STATUS_TIMEOUT;
+			goto out;
+		}
 
-	unsigned char *p = dc_buffer_get_data (packet);
-	size_t n = dc_buffer_get_size (packet);
-	if (p == NULL || n > size) {
-		status = DC_STATUS_IO;
-		goto error;
-	}
+		unsigned char *p = dc_buffer_get_data (packet);
+		size_t n = dc_buffer_get_size (packet);
+		if (p == NULL || n > size) {
+			status = DC_STATUS_IO;
+			goto error;
+		}
 
-	memcpy (data, p, n);
-	nbytes = n;
+		memcpy (data, p, n);
+		nbytes = n;
 
 error:
-	dc_buffer_free (packet);
+		dc_buffer_free (packet);
+	} else {
+#ifdef _WIN32
+		status = win32_ble_characteristic_read (abstract->context, device->hService, &device->characteristic_tx, data, size, &nbytes);
+#endif
+#ifdef HAVE_GLIB
+		status = bluez_ble_characteristic_read (device->bluez, &device->characteristic_tx, data, size, &nbytes);
+#endif
+		if (status != DC_STATUS_SUCCESS) {
+			goto out;
+		}
+	}
+
 out:
 	if (actual)
 		*actual = nbytes;
