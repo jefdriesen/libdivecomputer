@@ -91,6 +91,8 @@ LOCAL_SRC_FILES := \
 	src/shearwater_petrel.c \
 	src/shearwater_predator.c \
 	src/shearwater_predator_parser.c \
+	src/sherwood_logic.c \
+	src/sherwood_logic_parser.c \
 	src/socket.c \
 	src/sporasub_sp2.c \
 	src/sporasub_sp2_parser.c \
