@@ -30,6 +30,27 @@
 #include "checksum.h"
 #include "array.h"
 
+#define MAX_DATA 256
+
+#define CMD_RESPONSE 0x01
+
+#define CMD_AUTH   0x41
+#define CMD_AUTH_UNKNOWN 0x31
+
+#define CMD_QUERY 0xA0
+#define CMD_QUERY_MODEL 0x01
+
+#define CMD_DATA   0xD0
+#define CMD_DATA_SERIAL 0x10
+
+#define CMD_FILE   0xE0
+#define CMD_FILE_COUNT 0x00
+#define CMD_FILE_STAT  0x01
+#define CMD_FILE_OPEN  0x02
+#define CMD_FILE_READ  0x03
+#define CMD_FILE_CLOSE 0x04
+
+
 typedef struct sherwood_logic_device_t {
 	dc_device_t base;
 	dc_iostream_t *iostream;
@@ -50,6 +71,94 @@ static const dc_device_vtable_t sherwood_logic_device_vtable = {
 	NULL, /* timesync */
 	NULL, /* close */
 };
+
+static dc_status_t
+sherwood_logic_send (sherwood_logic_device_t *device, unsigned char cmd, unsigned char subcmd, const unsigned char data[], size_t size)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	if (size > MAX_DATA)
+		return DC_STATUS_INVALIDARGS;
+
+	if (device_is_cancelled (abstract))
+		return DC_STATUS_CANCELLED;
+
+	unsigned char packet[2 + MAX_DATA + 1] = {0};
+	packet[0] = cmd;
+	packet[1] = subcmd;
+	if (size) {
+		memcpy (packet + 2, data, size);
+	}
+	packet[2 + size] = checksum_crc8 (packet, 2 + size, 0x00, 0x00);
+
+	status = dc_iostream_write (device->iostream, packet, 2 + size + 1, NULL);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (device->base.context, "Failed to send the packet.");
+		return status;
+	}
+
+	return status;
+}
+
+static dc_status_t
+sherwood_logic_recv (sherwood_logic_device_t *device, unsigned char cmd, unsigned char subcmd, const unsigned char data[], size_t size)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	if (size > MAX_DATA)
+		return DC_STATUS_INVALIDARGS;
+
+	if (device_is_cancelled (abstract))
+		return DC_STATUS_CANCELLED;
+
+	size_t length = 0;
+	unsigned char packet[3 + MAX_DATA + 1] = {0};
+	status = dc_iostream_read (device->iostream, packet, sizeof(packet), &length);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (device->base.context, "Failed to read the packet.");
+		goto error_exit;
+	}
+
+	// Verify the minimum length of the packet.
+	if (length < 4) {
+		ERROR (abstract->context, "Unexpected packet length (" DC_PRINTF_SIZE ").", length);
+		status = DC_STATUS_PROTOCOL;
+		goto error_exit;
+	}
+
+	// Verify the checksum.
+	unsigned char crc = packet[length - 1];
+	unsigned char ccrc = checksum_crc8 (packet, length - 1, 0x00, 0x00);
+	if (crc != ccrc) {
+		ERROR (abstract->context, "Unexpected packet checksum (%02x %02x).", crc, ccrc);
+		status = DC_STATUS_PROTOCOL;
+		goto error_exit;
+	}
+
+	// Verify the command byte.
+	if (packet[0] != (cmd | CMD_RESPONSE) ||
+		packet[1] != subcmd) {
+		ERROR (abstract->context, "Unexpected command byte (%02x%02x).", packet[0], packet[1]);
+		status = DC_STATUS_PROTOCOL;
+		goto error_exit;
+	}
+
+	// Verify the maximum length of the packet.
+	if (length - 4 != size) {
+		ERROR (abstract->context, "Unexpected packet length (" DC_PRINTF_SIZE ").", length - 4);
+		status = DC_STATUS_PROTOCOL;
+		goto error_exit;
+	}
+
+	if (length - 4) {
+		memcpy (data, packet + 3, length - 4);
+	}
+
+error_exit:
+	return status;
+}
 
 dc_status_t
 sherwood_logic_device_open (dc_device_t **out, dc_context_t *context, dc_iostream_t *iostream)
