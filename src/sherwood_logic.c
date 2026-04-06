@@ -73,7 +73,7 @@ static const dc_device_vtable_t sherwood_logic_device_vtable = {
 };
 
 static dc_status_t
-sherwood_logic_send (sherwood_logic_device_t *device, unsigned char cmd, unsigned char subcmd, const unsigned char data[], size_t size)
+sherwood_logic_send (sherwood_logic_device_t *device, unsigned char cmd, const unsigned char data[], size_t size)
 {
 	dc_status_t status = DC_STATUS_SUCCESS;
 	dc_device_t *abstract = (dc_device_t *) device;
@@ -84,15 +84,14 @@ sherwood_logic_send (sherwood_logic_device_t *device, unsigned char cmd, unsigne
 	if (device_is_cancelled (abstract))
 		return DC_STATUS_CANCELLED;
 
-	unsigned char packet[2 + MAX_DATA + 1] = {0};
+	unsigned char packet[1 + MAX_DATA + 1] = {0};
 	packet[0] = cmd;
-	packet[1] = subcmd;
 	if (size) {
-		memcpy (packet + 2, data, size);
+		memcpy (packet + 1, data, size);
 	}
-	packet[2 + size] = checksum_crc8 (packet, 2 + size, 0x00, 0x00);
+	packet[1 + size] = checksum_crc8 (packet, 1 + size, 0x00, 0x00);
 
-	status = dc_iostream_write (device->iostream, packet, 2 + size + 1, NULL);
+	status = dc_iostream_write (device->iostream, packet, 1 + size + 1, NULL);
 	if (status != DC_STATUS_SUCCESS) {
 		ERROR (device->base.context, "Failed to send the packet.");
 		return status;
@@ -102,7 +101,7 @@ sherwood_logic_send (sherwood_logic_device_t *device, unsigned char cmd, unsigne
 }
 
 static dc_status_t
-sherwood_logic_recv (sherwood_logic_device_t *device, unsigned char cmd, unsigned char subcmd, const unsigned char data[], size_t size)
+sherwood_logic_recv (sherwood_logic_device_t *device, unsigned char cmd, unsigned char data[], size_t size)
 {
 	dc_status_t status = DC_STATUS_SUCCESS;
 	dc_device_t *abstract = (dc_device_t *) device;
@@ -114,7 +113,7 @@ sherwood_logic_recv (sherwood_logic_device_t *device, unsigned char cmd, unsigne
 		return DC_STATUS_CANCELLED;
 
 	size_t length = 0;
-	unsigned char packet[3 + MAX_DATA + 1] = {0};
+	unsigned char packet[1 + MAX_DATA + 1] = {0};
 	status = dc_iostream_read (device->iostream, packet, sizeof(packet), &length);
 	if (status != DC_STATUS_SUCCESS) {
 		ERROR (device->base.context, "Failed to read the packet.");
@@ -122,7 +121,7 @@ sherwood_logic_recv (sherwood_logic_device_t *device, unsigned char cmd, unsigne
 	}
 
 	// Verify the minimum length of the packet.
-	if (length < 4) {
+	if (length < 2) {
 		ERROR (abstract->context, "Unexpected packet length (" DC_PRINTF_SIZE ").", length);
 		status = DC_STATUS_PROTOCOL;
 		goto error_exit;
@@ -138,22 +137,22 @@ sherwood_logic_recv (sherwood_logic_device_t *device, unsigned char cmd, unsigne
 	}
 
 	// Verify the command byte.
-	if (packet[0] != (cmd | CMD_RESPONSE) ||
-		packet[1] != subcmd) {
-		ERROR (abstract->context, "Unexpected command byte (%02x%02x).", packet[0], packet[1]);
+	unsigned char rsp = cmd | CMD_RESPONSE;
+	if (packet[0] != rsp) {
+		ERROR (abstract->context, "Unexpected command byte (%02x).", packet[0]);
 		status = DC_STATUS_PROTOCOL;
 		goto error_exit;
 	}
 
 	// Verify the maximum length of the packet.
-	if (length - 4 != size) {
-		ERROR (abstract->context, "Unexpected packet length (" DC_PRINTF_SIZE ").", length - 4);
+	if (length - 2 != size) {
+		ERROR (abstract->context, "Unexpected packet length (" DC_PRINTF_SIZE ").", length - 2);
 		status = DC_STATUS_PROTOCOL;
 		goto error_exit;
 	}
 
-	if (length - 4) {
-		memcpy (data, packet + 3, length - 4);
+	if (length - 2) {
+		memcpy (data, packet + 1, length - 2);
 	}
 
 error_exit:
