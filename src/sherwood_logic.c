@@ -32,6 +32,8 @@
 
 #define MAX_DATA 256
 
+#define BLOCKSIZE 200
+
 #define CMD_RESPONSE 0x01
 
 #define CMD_AUTH   0x41
@@ -50,6 +52,10 @@
 #define CMD_FILE_READ  0x03
 #define CMD_FILE_CLOSE 0x04
 
+typedef struct sherwood_logic_file_t {
+	unsigned char name[12];
+	unsigned int size;
+} sherwood_logic_file_t;
 
 typedef struct sherwood_logic_device_t {
 	dc_device_t base;
@@ -159,6 +165,167 @@ error_exit:
 	return status;
 }
 
+static dc_status_t
+sherwood_logic_read_model (sherwood_logic_device_t *device, unsigned char data[], size_t size)
+{
+	unsigned char params[] = {CMD_QUERY_MODEL, 0x01}, payload[8] = {0};
+	sherwood_logic_send (device, CMD_QUERY, params, sizeof(params));
+	sherwood_logic_recv (device, CMD_QUERY, payload, sizeof(payload));
+
+	memcpy (data, payload + 2, sizeof(payload) - 2);
+
+	return DC_STATUS_SUCCESS;
+}
+
+static dc_status_t
+sherwood_logic_read_serial (sherwood_logic_device_t *device, unsigned char data[], size_t size)
+{
+	unsigned char params[] = {CMD_DATA_SERIAL, 0x01}, payload[34] = {0};
+	sherwood_logic_send (device, CMD_DATA, params, sizeof(params));
+	sherwood_logic_recv (device, CMD_DATA, payload, sizeof(payload));
+
+	memcpy (data, payload + 2, sizeof(payload) - 2);
+
+	return DC_STATUS_SUCCESS;
+}
+
+static dc_status_t
+sherwood_logic_auth (sherwood_logic_device_t *device)
+{
+	unsigned char params[] = {0x31, 0x00, 0x05, 0x69, 0x8a, 0x12, 0x9d, 0xd8};
+	sherwood_logic_send (device, CMD_AUTH, params, sizeof(params));
+	sherwood_logic_recv (device, CMD_AUTH, NULL, 0);
+
+	return DC_STATUS_SUCCESS;
+}
+
+static dc_status_t
+sherwood_logic_fileop (sherwood_logic_device_t *device, unsigned char cmd, const unsigned char idata[], size_t isize, unsigned char odata[], size_t osize)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	if (isize > MAX_DATA || osize > MAX_DATA)
+		return DC_STATUS_INVALIDARGS;
+
+	unsigned char params[3 + MAX_DATA] = {0};
+	params[0] = 0x00;
+	params[1] = 0x01;
+	params[2] = cmd;
+	if (isize) {
+		memcpy (params + 3, idata, isize);
+	}
+
+	status = sherwood_logic_send (device, CMD_FILE, params, 3 + isize);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the packet.");
+		return status;
+	}
+
+	unsigned char response[2 + MAX_DATA] = {0};
+	status = sherwood_logic_recv (device, CMD_FILE, response, 2 + osize);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to receive the packet.");
+		return status;
+	}
+
+	memcpy (odata, response + 2, osize);
+
+	return status;
+}
+
+static dc_status_t
+sherwood_logic_file_count (sherwood_logic_device_t *device, unsigned int *count)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	unsigned char response[2] = {0};
+	status = sherwood_logic_fileop (device, CMD_FILE_COUNT, NULL, 0, response, sizeof(response));
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the packet.");
+		return status;
+	}
+
+	*count = array_uint16_le (response);
+
+	return status;
+}
+
+static dc_status_t
+sherwood_logic_file_stat (sherwood_logic_device_t *device, unsigned int idx, sherwood_logic_file_t *file)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	unsigned char params[2] = {0};
+	unsigned char response[18] = {0};
+	array_uint16_le_set(params, idx);
+	status = sherwood_logic_fileop (device, CMD_FILE_STAT, params, sizeof(params), response, sizeof(response));
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the packet.");
+		return status;
+	}
+
+	memcpy (file->name, response + 2, 12);
+	file->size = array_uint32_le (response + 14);
+
+	return status;
+}
+
+static dc_status_t
+sherwood_logic_file_open (sherwood_logic_device_t *device, unsigned int idx)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	unsigned char params[2] = {0};
+	array_uint16_le_set(params, idx);
+	status = sherwood_logic_fileop (device, CMD_FILE_OPEN, params, sizeof(params), NULL, 0);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the packet.");
+		return status;
+	}
+
+	return status;
+}
+
+static dc_status_t
+sherwood_logic_file_read (sherwood_logic_device_t *device, unsigned int idx, unsigned int offset, unsigned char data[], unsigned int size)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	unsigned char params[8] = {0};
+	array_uint32_le_set(params + 0, offset);
+	array_uint32_le_set(params + 4, size);
+	status = sherwood_logic_fileop (device, CMD_FILE_READ, params, sizeof(params), data, size);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the packet.");
+		return status;
+	}
+
+	return status;
+}
+
+static dc_status_t
+sherwood_logic_file_close (sherwood_logic_device_t *device, unsigned int idx)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_device_t *abstract = (dc_device_t *) device;
+
+	unsigned char params[2] = {0};
+	unsigned char response[1] = {0};
+	array_uint16_le_set(params, idx);
+	status = sherwood_logic_fileop (device, CMD_FILE_CLOSE, NULL, 0, response, sizeof(response));
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the packet.");
+		return status;
+	}
+
+	return status;
+}
+
 dc_status_t
 sherwood_logic_device_open (dc_device_t **out, dc_context_t *context, dc_iostream_t *iostream)
 {
@@ -226,7 +393,115 @@ sherwood_logic_device_foreach (dc_device_t *abstract, dc_dive_callback_t callbac
 	dc_status_t status = DC_STATUS_SUCCESS;
 	sherwood_logic_device_t *device = (sherwood_logic_device_t *) abstract;
 
-	// TODO
+	// Read the model number.
+	unsigned char model[6] = {0};
+	status = sherwood_logic_read_model (device, model, sizeof(model));
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to read the model number.");
+		goto error_exit;
+	}
 
+	HEXDUMP(abstract->context, DC_LOGLEVEL_DEBUG, "Model", model, sizeof(model));
+	DEBUG (abstract->context, "Model: %.*s", (int)sizeof(model), model);
+
+	// Send the authentication handshake.
+	status = sherwood_logic_auth (device);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to send the authentication handshake.");
+		goto error_exit;
+	}
+
+	// Read the serial number.
+	unsigned char serial[32] = {0};
+	status = sherwood_logic_read_serial (device, serial, sizeof(serial));
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to read the serial number.");
+		goto error_exit;
+	}
+
+	HEXDUMP(abstract->context, DC_LOGLEVEL_DEBUG, "Serial", serial, sizeof(serial));
+	DEBUG (abstract->context, "Serial: %.*s", (int)sizeof(serial), serial);
+
+	// Get the number of files.
+	unsigned int count = 0;
+	status = sherwood_logic_file_count (device, &count);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to get the number of files.");
+		goto error_exit;
+	}
+	DEBUG (abstract->context, "count=%u", count);
+
+	sherwood_logic_file_t *files = malloc (count * sizeof(sherwood_logic_file_t));
+	if (files == NULL) {
+		status = DC_STATUS_NOMEMORY;
+		goto error_exit;
+	}
+
+	unsigned int maxsize = 0;
+	for (unsigned int i = 0; i < count; ++i) {
+		// Get the file metadata.
+		sherwood_logic_file_t file = {0};
+		sherwood_logic_file_stat (device, i, &file);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (abstract->context, "Failed to get the file metadata.");
+			goto error_exit;
+		}
+
+		files[i] = file;
+
+		DEBUG (abstract->context, "stat: idx=%u, name=%.*s, size=%u", i, (int)sizeof(files[i].name), files[i].name, files[i].size);
+
+		if (maxsize < file.size) {
+			maxsize = file.size;
+		}
+	}
+
+	unsigned char *buffer = malloc (maxsize);
+	if (buffer == NULL) {
+		status = DC_STATUS_NOMEMORY;
+		goto error_exit;
+	}
+
+	for (unsigned int i = 0; i < count; ++i) {
+
+		DEBUG (abstract->context, "stat: idx=%u, name=%.*s, size=%u", i, (int)sizeof(files[i].name), files[i].name, files[i].size);
+
+		status = sherwood_logic_file_open (device, i);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (abstract->context, "Failed to open the file.");
+			//goto error_exit;
+		}
+
+		unsigned int offset = 0;
+		while (offset < files[i].size) {
+			unsigned int len = files[i].size - offset;
+			if (len > BLOCKSIZE) {
+				len = BLOCKSIZE;
+			}
+
+			status = sherwood_logic_file_read (device, i, offset, buffer + offset, len);
+			if (status != DC_STATUS_SUCCESS) {
+				ERROR (abstract->context, "Failed to read the file block.");
+				goto error_exit;
+			}
+
+			offset += len;
+		}
+
+		status = sherwood_logic_file_close (device, i);
+		if (status != DC_STATUS_SUCCESS) {
+			ERROR (abstract->context, "Failed to close the file.");
+			goto error_exit;
+		}
+
+		if (callback && !callback (buffer, files[i].size, NULL, 0, userdata)) {
+			break;
+		}
+	}
+
+	free (buffer);
+	free (files);
+
+error_exit:
 	return status;
 }
