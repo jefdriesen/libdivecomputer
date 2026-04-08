@@ -81,7 +81,10 @@ sherwood_logic_parser_get_datetime (dc_parser_t *abstract, dc_datetime_t *dateti
 	const unsigned char *data = abstract->data;
 	unsigned int size = abstract->size;
 
-	// TODO
+	unsigned int ticks = array_uint32_le (data + 0x17);
+
+	if (!dc_datetime_gmtime (datetime, ticks))
+		return DC_STATUS_DATAFORMAT;
 
 	return DC_STATUS_SUCCESS;
 }
