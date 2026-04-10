@@ -1186,6 +1186,192 @@ out:
 }
 
 static dc_status_t
+dc_ble_characteristic_read (dc_ble_t *device, dc_ble_uuid_t characteristic, unsigned char data[], size_t size)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_iostream_t *abstract = (dc_iostream_t *) device;
+
+#ifdef _WIN32
+	// Get the BLE characteristics.
+	size_t ncharacteristics = 0;
+	BTH_LE_GATT_CHARACTERISTIC *characteristics = NULL;
+	status = win32_ble_get_characteristics (abstract->context, device->hService, &device->service, &characteristics, &ncharacteristics);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to get the BLE characteristics.");
+		goto error_exit;
+	}
+
+	// Find the characteristics.
+	BTH_LE_GATT_CHARACTERISTIC *result = NULL;
+	for (size_t j = 0; j < ncharacteristics; j++) {
+		dc_ble_uuid_t uuid = {0};
+		win32_ble_uuid2uuid (characteristics[j].CharacteristicUuid, &uuid);
+
+		if (memcmp (characteristic, uuid, sizeof(uuid)) == 0) {
+			result = characteristics + j;
+			break;
+		}
+	}
+
+	if (result == NULL) {
+		char uuidstr[DC_BLE_UUID_SIZE] = {0};
+		ERROR (abstract->context, "Failed to find BLE characteristic '%s'.",
+			dc_ble_uuid2str(characteristic, uuidstr, sizeof(uuidstr)));
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+	size_t length = 0;
+	status = win32_ble_characteristic_read (abstract->context, device->hService, result, data, size, &length);
+	if (status != DC_STATUS_SUCCESS) {
+		goto error_free;
+	}
+
+	if (length != size) {
+		ERROR (abstract->context, "Unexpected length.");
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+error_free:
+	free (characteristics);
+error_exit:
+#endif
+
+#ifdef HAVE_GLIB
+	// Get the BLE characteristics.
+	size_t ncharacteristics = 0;
+	bluez_ble_characteristic_t *characteristics = NULL;
+	status = bluez_ble_get_characteristics (device->bluez, &device->service, &characteristics, &ncharacteristics);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to get the BLE characteristics.");
+		goto error_exit;
+	}
+
+	// Find the characteristics.
+	bluez_ble_characteristic_t *result = NULL;
+	for (size_t j = 0; j < ncharacteristics; j++) {
+		if (memcmp (characteristics[j].uuid, characteristic, sizeof(dc_ble_uuid_t)) == 0) {
+			result = characteristics + j;
+			break;
+		}
+	}
+
+	if (result == NULL) {
+		char uuidstr[DC_BLE_UUID_SIZE] = {0};
+		ERROR (abstract->context, "Failed to find BLE characteristic '%s'.",
+			dc_ble_uuid2str(characteristic, uuidstr, sizeof(uuidstr)));
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+	size_t length = 0;
+	status = bluez_ble_characteristic_read (device->bluez, result, data, size, &length);
+	if (status != DC_STATUS_SUCCESS) {
+		goto error_free;
+	}
+
+	if (length != size) {
+		ERROR (abstract->context, "Unexpected length.");
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+error_free:
+	free (characteristics);
+error_exit:
+#endif
+
+	return status;
+}
+
+static dc_status_t
+dc_ble_characteristic_write (dc_ble_t *device, dc_ble_uuid_t characteristic, unsigned char data[], size_t size)
+{
+	dc_status_t status = DC_STATUS_SUCCESS;
+	dc_iostream_t *abstract = (dc_iostream_t *) device;
+
+#ifdef _WIN32
+	// Get the BLE characteristics.
+	size_t ncharacteristics = 0;
+	BTH_LE_GATT_CHARACTERISTIC *characteristics = NULL;
+	status = win32_ble_get_characteristics (abstract->context, device->hService, &device->service, &characteristics, &ncharacteristics);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to get the BLE characteristics.");
+		goto error_exit;
+	}
+
+	// Find the characteristics.
+	BTH_LE_GATT_CHARACTERISTIC *result = NULL;
+	for (size_t j = 0; j < ncharacteristics; j++) {
+		dc_ble_uuid_t uuid = {0};
+		win32_ble_uuid2uuid (characteristics[j].CharacteristicUuid, &uuid);
+
+		if (memcmp (characteristic, uuid, sizeof(uuid)) == 0) {
+			result = characteristics + j;
+			break;
+		}
+	}
+
+	if (result == NULL) {
+		char uuidstr[DC_BLE_UUID_SIZE] = {0};
+		ERROR (abstract->context, "Failed to find BLE characteristic '%s'.",
+			dc_ble_uuid2str(characteristic, uuidstr, sizeof(uuidstr)));
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+	status = win32_ble_characteristic_write (abstract->context, device->hService, result, data, size);
+	if (status != DC_STATUS_SUCCESS) {
+		goto error_free;
+	}
+
+error_free:
+	free (characteristics);
+error_exit:
+#endif
+
+#ifdef HAVE_GLIB
+	// Get the BLE characteristics.
+	size_t ncharacteristics = 0;
+	bluez_ble_characteristic_t *characteristics = NULL;
+	status = bluez_ble_get_characteristics (device->bluez, &device->service, &characteristics, &ncharacteristics);
+	if (status != DC_STATUS_SUCCESS) {
+		ERROR (abstract->context, "Failed to get the BLE characteristics.");
+		goto error_exit;
+	}
+
+	// Find the characteristics.
+	bluez_ble_characteristic_t *result = NULL;
+	for (size_t j = 0; j < ncharacteristics; j++) {
+		if (memcmp (characteristics[j].uuid, characteristic, sizeof(dc_ble_uuid_t)) == 0) {
+			result = characteristics + j;
+			break;
+		}
+	}
+
+	if (result == NULL) {
+		char uuidstr[DC_BLE_UUID_SIZE] = {0};
+		ERROR (abstract->context, "Failed to find BLE characteristic '%s'.",
+			dc_ble_uuid2str(characteristic, uuidstr, sizeof(uuidstr)));
+		status = DC_STATUS_IO;
+		goto error_free;
+	}
+
+	status = bluez_ble_characteristic_write (device->bluez, result, data, size);
+	if (status != DC_STATUS_SUCCESS) {
+		goto error_free;
+	}
+
+error_free:
+	free (characteristics);
+error_exit:
+#endif
+
+	return status;
+}
+
+static dc_status_t
 dc_ble_ioctl (dc_iostream_t *abstract, unsigned int request, void *data, size_t size)
 {
 	dc_status_t status = DC_STATUS_SUCCESS;
@@ -1195,6 +1381,10 @@ dc_ble_ioctl (dc_iostream_t *abstract, unsigned int request, void *data, size_t 
 	case DC_IOCTL_BLE_GET_NAME:
 		strncpy(data, device->name, size);
 		return DC_STATUS_SUCCESS;
+	case DC_IOCTL_BLE_CHARACTERISTIC_READ:
+		return dc_ble_characteristic_read (device, *(dc_ble_uuid_t *) data, (unsigned char *) data + sizeof(dc_ble_uuid_t), size - sizeof(dc_ble_uuid_t));
+	case DC_IOCTL_BLE_CHARACTERISTIC_WRITE:
+		return dc_ble_characteristic_write (device, *(dc_ble_uuid_t *) data, (unsigned char *) data + sizeof(dc_ble_uuid_t), size - sizeof(dc_ble_uuid_t));
 	default:
 		return DC_STATUS_UNSUPPORTED;
 	}
