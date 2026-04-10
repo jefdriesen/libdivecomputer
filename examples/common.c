@@ -38,6 +38,8 @@
 #include "common.h"
 #include "utils.h"
 
+#define FILENAME_ACCESSCODE "accesscode.bin"
+
 #ifdef _WIN32
 #define DC_TICKS_FORMAT "%I64d"
 #else
@@ -409,6 +411,50 @@ dctool_file_read (const char *filename)
 }
 
 static dc_status_t
+dctool_auth_get_pincode (dc_iostream_t *iostream, unsigned char data[], size_t size, void *userdata)
+{
+	fprintf(stderr, "Enter PIN code: ");
+	if (fgets ((char *) data, size, stdin) != NULL) {
+		size_t len = strlen ((char *) data);
+		if (len > 0 && data[len - 1] == '\n') {
+			data[--len] = '\0';
+		}
+	}
+
+	return DC_STATUS_SUCCESS;
+}
+
+static dc_status_t
+dctool_auth_get_accesscode (dc_iostream_t *iostream, unsigned char data[], size_t size, void *userdata)
+{
+	FILE *fp = fopen (FILENAME_ACCESSCODE, "rb");
+	if (fp == NULL) {
+		ERROR("Failed to open the access code file.");
+		return DC_STATUS_SUCCESS;
+	}
+
+	fread (data, sizeof (unsigned char), size, fp);
+	fclose (fp);
+
+	return DC_STATUS_SUCCESS;
+}
+
+static dc_status_t
+dctool_auth_set_accesscode (dc_iostream_t *iostream, unsigned char data[], size_t size, void *userdata)
+{
+	FILE *fp = fopen (FILENAME_ACCESSCODE, "wb");
+	if (fp == NULL) {
+		ERROR("Failed to open the access code file.");
+		return DC_STATUS_SUCCESS;
+	}
+
+	fwrite (data, sizeof (unsigned char), size, fp);
+	fclose (fp);
+
+	return DC_STATUS_SUCCESS;
+}
+
+static dc_status_t
 dctool_usb_open (dc_iostream_t **out, dc_context_t *context, dc_descriptor_t *descriptor)
 {
 	dc_status_t status = DC_STATUS_SUCCESS;
@@ -609,6 +655,14 @@ dctool_ble_open (dc_iostream_t **out, dc_context_t *context, dc_descriptor_t *de
 		ERROR ("Failed to open the ble device.");
 		goto cleanup;
 	}
+
+	const dc_ble_auth_cbs_t callbacks = {
+		dctool_auth_get_pincode, /* get_pincode */
+		dctool_auth_get_accesscode, /* get_accesscode */
+		dctool_auth_set_accesscode, /* set_accesscode */
+	};
+
+	dc_ble_set_auth (iostream, &callbacks, NULL);
 
 	*out = iostream;
 
