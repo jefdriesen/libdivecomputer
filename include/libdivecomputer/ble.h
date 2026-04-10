@@ -96,6 +96,12 @@ typedef unsigned char dc_ble_uuid_t[16];
  */
 typedef struct dc_ble_device_t dc_ble_device_t;
 
+typedef struct dc_ble_auth_cbs_t {
+	dc_status_t (*get_pincode) (dc_iostream_t *iostream, unsigned char data[], size_t size, void *userdata);
+	dc_status_t (*get_accesscode) (dc_iostream_t *iostream, unsigned char data[], size_t size, void *userdata);
+	dc_status_t (*set_accesscode) (dc_iostream_t *iostream, unsigned char data[], size_t size, void *userdata);
+} dc_ble_auth_cbs_t;
+
 /**
  * Convert a bluetooth address to a string.
  *
@@ -201,6 +207,9 @@ dc_ble_iterator_new (dc_iterator_t **iterator, dc_context_t *context, dc_descrip
  */
 dc_status_t
 dc_ble_open (dc_iostream_t **iostream, dc_context_t *context, dc_ble_address_t address);
+
+dc_status_t
+dc_ble_set_auth (dc_iostream_t *iostream, const dc_ble_auth_cbs_t *callbacks, void *userdata);
 
 #ifdef __cplusplus
 }

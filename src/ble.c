@@ -131,6 +131,8 @@ typedef struct dc_ble_t {
 	bluez_ble_characteristic_t characteristic_rx_credits;
 	bluez_ble_characteristic_t characteristic_tx_credits;
 #endif
+	dc_ble_auth_cbs_t auth_callbacks;
+	void *auth_userdata;
 } dc_ble_t;
 
 static const dc_iterator_vtable_t dc_ble_iterator_vtable = {
@@ -639,6 +641,32 @@ on_bluez_ble_notify (bluez_ble_t *bluez, const bluez_ble_characteristic_t *chara
 #endif
 
 dc_status_t
+dc_ble_set_auth (dc_iostream_t *abstract, const dc_ble_auth_cbs_t *callbacks, void *userdata)
+{
+#ifdef BLE
+	dc_ble_t *device = (dc_ble_t *) abstract;
+
+	if (!ISINSTANCE(abstract)) {
+		return DC_STATUS_INVALIDARGS;
+	}
+
+	if (callbacks) {
+		device->auth_callbacks = *callbacks;
+		device->auth_userdata = userdata;
+	} else {
+		device->auth_callbacks.get_pincode = NULL;
+		device->auth_callbacks.get_accesscode = NULL;
+		device->auth_callbacks.set_accesscode = NULL;
+		device->auth_userdata = NULL;
+	}
+
+	return DC_STATUS_SUCCESS;
+#else
+	return DC_STATUS_UNSUPPORTED;
+#endif
+}
+
+dc_status_t
 dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t address)
 {
 #ifdef BLE
@@ -662,6 +690,11 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	device->flowcontrol = 0;
 	device->credits_rx = 0;
 	device->credits_tx = 0;
+
+	device->auth_callbacks.get_pincode = NULL;
+	device->auth_callbacks.get_accesscode = NULL;
+	device->auth_callbacks.set_accesscode = NULL;
+	device->auth_userdata = NULL;
 
 	device->packets = dc_queue_new ((dc_queue_free_t) dc_buffer_free);
 	if (device->packets == NULL) {
@@ -1385,6 +1418,24 @@ dc_ble_ioctl (dc_iostream_t *abstract, unsigned int request, void *data, size_t 
 		return dc_ble_characteristic_read (device, *(dc_ble_uuid_t *) data, (unsigned char *) data + sizeof(dc_ble_uuid_t), size - sizeof(dc_ble_uuid_t));
 	case DC_IOCTL_BLE_CHARACTERISTIC_WRITE:
 		return dc_ble_characteristic_write (device, *(dc_ble_uuid_t *) data, (unsigned char *) data + sizeof(dc_ble_uuid_t), size - sizeof(dc_ble_uuid_t));
+	case DC_IOCTL_BLE_GET_PINCODE:
+		if (device->auth_callbacks.get_pincode) {
+			return device->auth_callbacks.get_pincode (abstract, data, size, device->auth_userdata);
+		} else {
+			return DC_STATUS_UNSUPPORTED;
+		}
+	case DC_IOCTL_BLE_GET_ACCESSCODE:
+		if (device->auth_callbacks.get_accesscode) {
+			return device->auth_callbacks.get_accesscode (abstract, data, size, device->auth_userdata);
+		} else {
+			return DC_STATUS_UNSUPPORTED;
+		}
+	case DC_IOCTL_BLE_SET_ACCESSCODE:
+		if (device->auth_callbacks.set_accesscode) {
+			return device->auth_callbacks.set_accesscode (abstract, data, size, device->auth_userdata);
+		} else {
+			return DC_STATUS_UNSUPPORTED;
+		}
 	default:
 		return DC_STATUS_UNSUPPORTED;
 	}
