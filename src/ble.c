@@ -90,6 +90,7 @@ typedef struct dc_ble_t {
 	unsigned int flowcontrol;
 	unsigned char credits_tx;
 	unsigned char credits_rx;
+	dc_queue_t *packets;
 } dc_ble_t;
 
 static const dc_iterator_vtable_t dc_ble_iterator_vtable = {
@@ -429,6 +430,12 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	device->credits_rx = 0;
 	device->credits_tx = 0;
 
+	device->packets = dc_queue_new ((dc_queue_free_t) dc_buffer_free);
+	if (device->packets == NULL) {
+		ERROR (context, "Out of memory.");
+		goto error_free;
+	}
+
 	// TODO
 
 	*out = (dc_iostream_t *) device;
@@ -451,6 +458,8 @@ dc_ble_close (dc_iostream_t *abstract)
 	dc_ble_t *device = (dc_ble_t *) abstract;
 
 	// TODO
+
+	dc_queue_free (device->packets);
 
 	return status;
 }
@@ -484,8 +493,24 @@ dc_ble_read (dc_iostream_t *abstract, void *data, size_t size, size_t *actual)
 	dc_ble_t *device = (dc_ble_t *) abstract;
 	size_t nbytes = 0;
 
-	// TODO
+	dc_buffer_t *packet = dc_queue_pop (device->packets, device->timeout);
+	if (packet == NULL) {
+		status = DC_STATUS_TIMEOUT;
+		goto out;
+	}
 
+	unsigned char *p = dc_buffer_get_data (packet);
+	size_t n = dc_buffer_get_size (packet);
+	if (p == NULL || n > size) {
+		status = DC_STATUS_IO;
+		goto error;
+	}
+
+	memcpy (data, p, n);
+	nbytes = n;
+
+error:
+	dc_buffer_free (packet);
 out:
 	if (actual)
 		*actual = nbytes;
@@ -544,7 +569,7 @@ dc_ble_purge (dc_iostream_t *abstract, dc_direction_t direction)
 	dc_status_t status = DC_STATUS_SUCCESS;
 	dc_ble_t *device = (dc_ble_t *) abstract;
 
-	// TODO
+	dc_queue_clear (device->packets);
 
 	return status;
 }
