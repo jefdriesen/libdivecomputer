@@ -26,6 +26,9 @@
 #include <stdlib.h> // malloc, free
 #include <stdio.h>
 #include <string.h>
+#ifdef HAVE_PTHREAD_H
+#include <pthread.h>
+#endif
 
 #ifdef _WIN32
 #include "ble-win32.h"
@@ -44,6 +47,29 @@
 #include "iterator-private.h"
 #include "platform.h"
 #include "queue.h"
+
+#ifdef _WIN32
+typedef CRITICAL_SECTION dc_mutex_t;
+typedef CONDITION_VARIABLE dc_cond_t;
+#define DC_MUTEX_INIT(mutex) InitializeCriticalSection (mutex)
+#define DC_MUTEX_FREE(mutex) DeleteCriticalSection (mutex)
+#define DC_MUTEX_LOCK(mutex) EnterCriticalSection (mutex)
+#define DC_MUTEX_UNLOCK(mutex) LeaveCriticalSection (mutex)
+#define DC_COND_INIT(cond) InitializeConditionVariable (cond)
+#define DC_COND_FREE(cond)
+#define DC_COND_SIGNAL(cond) WakeConditionVariable (cond)
+#else
+typedef pthread_mutex_t dc_mutex_t;
+typedef pthread_cond_t dc_cond_t;
+#define DC_MUTEX_INIT(mutex) pthread_mutex_init (mutex, NULL)
+#define DC_MUTEX_FREE(mutex) pthread_mutex_destroy (mutex)
+#define DC_MUTEX_LOCK(mutex) pthread_mutex_lock (mutex)
+#define DC_MUTEX_UNLOCK(mutex) pthread_mutex_unlock (mutex)
+#define DC_COND_INIT(cond) pthread_cond_init (cond, NULL)
+#define DC_COND_FREE(cond) pthread_cond_destroy (cond)
+#define DC_COND_SIGNAL(cond) pthread_cond_signal (cond)
+#endif
+#define DC_COND_WAIT(cond,mutex,timeout) dc_cond_wait (cond, mutex, timeout)
 
 #ifdef _WIN32
 #define DC_ADDRESS_FORMAT "%012I64X"
@@ -111,6 +137,8 @@ typedef struct dc_ble_t {
 	unsigned char credits_tx;
 	unsigned char credits_rx;
 	dc_queue_t *packets;
+	dc_mutex_t mutex;
+	dc_cond_t cond;
 #ifdef _WIN32
 	HANDLE hDevice;
 	HANDLE hService;
@@ -239,6 +267,33 @@ static const dc_ble_uart_t g_uarts[] = {
 		"43c620c2-1b09-4951-bc1e-9c75298cddeb",
 		NULL, NULL}},
 };
+
+static int
+dc_cond_wait (dc_cond_t *cond, dc_mutex_t *mutex, int timeout)
+{
+#ifdef _WIN32
+	DWORD ts = timeout >= 0 ? (DWORD) timeout : INFINITE;
+	return SleepConditionVariableCS (cond, mutex, ts);
+#else
+	if (timeout >= 0) {
+		struct timespec ts = {0};
+#ifdef HAVE_CLOCK_GETTIME
+		clock_gettime (CLOCK_REALTIME, &ts);
+#else
+		struct timeval tv = {0};
+		gettimeofday (&tv, NULL);
+		ts.tv_sec  = tv.tv_sec;
+		ts.tv_nsec = tv.tv_usec * 1000;
+#endif
+		ts.tv_sec  += (timeout / 1000);
+		ts.tv_nsec += (timeout % 1000) * 1000000;
+
+		return pthread_cond_timedwait (cond, mutex, &ts);
+	} else {
+		return pthread_cond_wait (cond, mutex);
+	}
+#endif
+}
 
 static const dc_ble_uart_t *
 dc_ble_uart_find (const char *service)
@@ -609,7 +664,10 @@ on_win32_ble_notify (BTH_LE_GATT_EVENT_TYPE type, void *parameter, void *userdat
 	} else if (event->ChangedAttributeHandle == device->characteristic_tx_credits.AttributeHandle) {
 		unsigned char credits = value->Data[0];
 
+		DC_MUTEX_LOCK (&device->mutex);
 		device->credits_rx += credits;
+		DC_MUTEX_UNLOCK (&device->mutex);
+		DC_COND_SIGNAL (&device->cond);
 	}
 }
 #endif
@@ -635,7 +693,10 @@ on_bluez_ble_notify (bluez_ble_t *bluez, const bluez_ble_characteristic_t *chara
 		}
 	} else if (characteristic->handle == device->characteristic_tx_credits.handle) {
 		unsigned char credits = data[0];
+		DC_MUTEX_LOCK (&device->mutex);
 		device->credits_rx += credits;
+		DC_MUTEX_UNLOCK (&device->mutex);
+		DC_COND_SIGNAL (&device->cond);
 	}
 }
 #endif
@@ -690,6 +751,9 @@ dc_ble_open (dc_iostream_t **out, dc_context_t *context, dc_ble_address_t addres
 	device->flowcontrol = 0;
 	device->credits_rx = 0;
 	device->credits_tx = 0;
+
+	DC_MUTEX_INIT (&device->mutex);
+	DC_COND_INIT (&device->cond);
 
 	device->auth_callbacks.get_pincode = NULL;
 	device->auth_callbacks.get_accesscode = NULL;
@@ -1108,6 +1172,9 @@ dc_ble_close (dc_iostream_t *abstract)
 	bluez_ble_free (device->bluez);
 #endif
 
+	DC_MUTEX_FREE (&device->mutex);
+	DC_COND_FREE (&device->cond);
+
 	dc_queue_free (device->packets);
 
 	return status;
@@ -1189,10 +1256,12 @@ dc_ble_write (dc_iostream_t *abstract, const void *data, size_t size, size_t *ac
 
 	if (device->flowcontrol) {
 		// Wait for credits.
+		DC_MUTEX_LOCK (&device->mutex);
 		while (device->credits_rx == 0) {
 			WARNING (abstract->context, "Waiting for uart RX credits.");
-			dc_platform_sleep (10);
+			DC_COND_WAIT (&device->cond, &device->mutex, 10);
 		}
+		DC_MUTEX_UNLOCK (&device->mutex);
 	}
 
 #ifdef _WIN32
@@ -1208,7 +1277,9 @@ dc_ble_write (dc_iostream_t *abstract, const void *data, size_t size, size_t *ac
 	nbytes = size;
 
 	if (device->flowcontrol) {
+		DC_MUTEX_LOCK (&device->mutex);
 		device->credits_rx--;
+		DC_MUTEX_UNLOCK (&device->mutex);
 	}
 
 out:
