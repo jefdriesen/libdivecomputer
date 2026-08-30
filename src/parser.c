@@ -29,6 +29,7 @@
 #include "suunto_solution.h"
 #include "suunto_vyper2.h"
 #include "suunto_vyper.h"
+#include "suunto_nautic.h"
 #include "reefnet_sensus.h"
 #include "reefnet_sensuspro.h"
 #include "reefnet_sensusultra.h"
@@ -100,6 +101,9 @@ dc_parser_new_internal (dc_parser_t **out, dc_context_t *context, const unsigned
 		break;
 	case DC_FAMILY_SUUNTO_EONSTEEL:
 		rc = suunto_eonsteel_parser_create(&parser, context, data, size, model);
+		break;
+	case DC_FAMILY_SUUNTO_NAUTIC:
+		rc = suunto_nautic_parser_create (&parser, context, data, size);
 		break;
 	case DC_FAMILY_UWATEC_ALADIN:
 	case DC_FAMILY_UWATEC_MEMOMOUSE:
