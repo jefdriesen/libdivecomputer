@@ -489,6 +489,10 @@ mares_iconhd_read_object(mares_iconhd_device_t *device, dc_event_progress_t *pro
 		}
 
 		nbytes += sizeof(rsp_init) - 4;
+	} else if (rsp_init[0] == 0x80) {
+		unsigned int errcode = array_uint32_le (rsp_init + 4);
+		ERROR (abstract->context, "Received NAK packet with error code 0x%08x.", errcode);
+		return DC_STATUS_PROTOCOL;
 	} else {
 		ERROR (abstract->context, "Unexpected packet type (%02x).", rsp_init[0]);
 		return DC_STATUS_PROTOCOL;
