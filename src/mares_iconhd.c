@@ -111,6 +111,8 @@
 #define NITROX    2
 #define FREEDIVE  3
 
+#define ERR_UNAVAILABLE 0x08000020
+
 typedef struct mares_iconhd_layout_t {
 	unsigned int memsize;
 	unsigned int rb_profile_begin;
@@ -1153,10 +1155,15 @@ mares_iconhd_device_foreach_object (dc_device_t *abstract, dc_dive_callback_t ca
 		}
 
 		// Read the dive data.
-		rc = mares_iconhd_read_object (device, &progress, buffer, OBJ_DIVE + i, OBJ_DIVE_DATA, NULL);
+		unsigned int errcode = 0;
+		rc = mares_iconhd_read_object (device, &progress, buffer, OBJ_DIVE + i, OBJ_DIVE_DATA, &errcode);
 		if (rc != DC_STATUS_SUCCESS) {
 			ERROR (abstract->context, "Failed to read the dive data.");
-			break;
+			if (errcode == ERR_UNAVAILABLE) {
+				rc = DC_STATUS_SUCCESS;
+			} else {
+				break;
+			}
 		}
 
 		const unsigned char *data = dc_buffer_get_data (buffer);
